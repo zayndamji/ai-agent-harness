@@ -1,19 +1,36 @@
 name: claude-harness
 
+# Shared by both services: same image, same volumes, same restrictions.
+x-claude: &claude
+  build: .
+  image: claude-harness:latest
+  hostname: claude-box
+  init: true
+  volumes:
+    # Login, settings and session history (~/.claude and ~/.claude.json).
+    - home:/home/node
+    # Projects Claude works on. No host folders are mounted.
+    - workspace:/workspace
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
+  # Claude Code in your terminal: docker compose run --rm claude
   claude:
-    build: .
-    image: claude-harness:latest
-    hostname: claude-box
+    <<: *claude
     stdin_open: true
     tty: true
-    volumes:
-      # Login, settings and session history (~/.claude and ~/.claude.json).
-      - home:/home/node
-      # Projects Claude works on. No host folders are mounted.
-      - workspace:/workspace
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+
+  # The web UI: docker compose up -d web
+  web:
+    <<: *claude
+    command: ["node", "/opt/harness/server.js"]
+    environment:
+      HARNESS_PASSWORD: ${HARNESS_PASSWORD:-}
+      HARNESS_CLAUDE_ARGS: ${HARNESS_CLAUDE_ARGS:-}
+    ports:
+      - "${HARNESS_BIND:-127.0.0.1}:${HARNESS_PORT:-8080}:8080"
+    restart: unless-stopped
 
 volumes:
   home:

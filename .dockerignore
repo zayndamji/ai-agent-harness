@@ -3,7 +3,7 @@
 context
 data
 workspaces
-node_modules
+**/node_modules
 .env
 .env.*
 *.md

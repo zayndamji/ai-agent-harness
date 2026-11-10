@@ -15,6 +15,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     && npm cache clean --force
 
+# The web UI server (server/). node-pty compiles here, for the image's architecture.
+WORKDIR /opt/harness
+COPY server/package.json server/package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server/ ./
+
 # Updates come from rebuilding the image, not from the running container.
 ENV DISABLE_AUTOUPDATER=1 \
     EDITOR=vi \
@@ -24,5 +30,6 @@ RUN mkdir -p /workspace && chown node:node /workspace
 
 USER node
 WORKDIR /workspace
+EXPOSE 8080
 
 CMD ["claude"]

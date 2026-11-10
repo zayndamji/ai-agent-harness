@@ -1,0 +1,21 @@
+{
+  "name": "claude-harness-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web UI for a Claude Code session running in a pseudo-terminal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
+    "@xterm/xterm": "6.0.0",
+    "node-pty": "1.1.0",
+    "ws": "8.22.2"
+  }
+}

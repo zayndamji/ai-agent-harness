@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Harness</title>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body class="app">
+  <header class="bar">
+    <span class="title">Claude Harness</span>
+    <span id="status" class="status" data-state="connecting">Connecting</span>
+    <span class="spacer"></span>
+    <button id="stop" type="button" class="secondary" hidden>Stop session</button>
+    <form method="post" action="/logout">
+      <button type="submit" class="secondary">Log out</button>
+    </form>
+  </header>
+
+  <main class="stage">
+    <div id="terminal" class="terminal"></div>
+    <div id="idle" class="idle" hidden>
+      <p id="idle-text">No session is running.</p>
+      <button id="start" type="button">Start session</button>
+    </div>
+  </main>
+
+  <form id="composer" class="composer">
+    <textarea id="message" rows="1" placeholder="Message Claude. Enter sends, Shift+Enter adds a line." disabled></textarea>
+    <button id="send" type="submit" disabled>Send</button>
+  </form>
+</body>
+</html>
