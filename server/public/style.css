@@ -224,8 +224,6 @@ body.app {
   .status { padding: 6px; }
   .tabs { justify-self: center; }
   .tabs button { padding: 6px 9px; font-size: 12.5px; }
-  #stop span { display: none; }
-  #stop { padding: 7px; }
   .session-bar, .tasks > details, .chat-scroll { padding-left: 14px; padding-right: 14px; }
   .composer-wrap { padding: 8px 10px 10px; }
 }
@@ -821,6 +819,7 @@ body.files-open .idle, body.files-open .composer-wrap { display: none; }
 .session-prompt { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-time { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .session-running { font-size: 12px; font-weight: 600; color: var(--ok); white-space: nowrap; padding: 0 4px; }
+.session-actions { display: inline-flex; align-items: center; gap: 6px; }
 .session-more { padding: 6px 12px 9px; font-size: 12px; color: var(--muted); }
 
 .folder-chip {
@@ -1306,4 +1305,85 @@ button.rank-row:hover { background: var(--bg-sunken); }
   .tabs { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { padding: 6px 8px; font-size: 12px; }
+}
+
+/* Sidebar: the sessions the server runs, one row each */
+
+body.app { grid-template-columns: auto minmax(0, 1fr); }
+body.app > .bar { grid-column: 2; grid-row: 1; }
+body.app > .stage { grid-column: 2; grid-row: 2; }
+body.app > .composer-wrap { grid-column: 2; grid-row: 3; }
+.sidebar {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  width: 248px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+body.sidebar-collapsed .sidebar { display: none; }
+.sidebar-head {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: 52px;
+  padding: 18px 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-title { font-weight: 600; font-size: 13.5px; }
+.slot-count { color: var(--muted); font-size: 12px; }
+.slot-list { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 2px; padding: 8px; }
+.slots-empty { margin: 0; padding: 8px 10px; color: var(--muted); font-size: 12.5px; }
+.slot { display: flex; align-items: center; border-radius: 8px; }
+.slot:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.slot[aria-current="true"] { background: var(--bg-raised); box-shadow: 0 1px 2px rgb(0 0 0 / 0.1); }
+button.slot-main {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 8px 4px 8px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+button.slot-main:hover { background: transparent; }
+.slot-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.slot[data-state="ready"] .slot-dot { background: var(--ok); }
+.slot[data-state="working"] .slot-dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.slot[data-state="waiting"] .slot-dot { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); }
+.slot[data-state="exited"] .slot-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.slot-text { min-width: 0; display: grid; gap: 3px; }
+.slot-title, .slot-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.2; }
+.slot-title { font-size: 13px; font-weight: 500; }
+.slot[data-state="exited"] .slot-title { color: var(--muted); }
+.slot-sub { font-size: 11.5px; font-weight: 400; color: var(--muted); }
+.slot[data-state="waiting"] .slot-sub { color: var(--warn); }
+button.slot-action { flex: none; margin-right: 5px; border: 0; opacity: 0; }
+.slot:hover .slot-action, .slot[aria-current="true"] .slot-action, .slot-action:focus-visible { opacity: 1; }
+@media (hover: none) { button.slot-action { opacity: 1; } }
+button.new-session { flex: none; margin: 8px; }
+.sidebar-toggle { position: relative; flex: none; }
+.sidebar-badge { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.sidebar-backdrop { display: none; }
+
+/* Phones: the sidebar slides in over the page. */
+@media (max-width: 760px) {
+  .sidebar, body.sidebar-collapsed .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    display: flex;
+    width: min(280px, 85vw);
+    box-shadow: var(--shadow);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.18s ease, visibility 0s 0.18s;
+  }
+  body.sidebar-open .sidebar { transform: none; visibility: visible; transition: transform 0.18s ease; }
+  body.sidebar-open .sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / 0.35); }
 }

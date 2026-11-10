@@ -28,6 +28,7 @@ services:
     environment:
       HARNESS_PASSWORD: ${HARNESS_PASSWORD:-}
       HARNESS_CLAUDE_ARGS: ${HARNESS_CLAUDE_ARGS:-}
+      HARNESS_MAX_SESSIONS: ${HARNESS_MAX_SESSIONS:-10}
     ports:
       - "${HARNESS_BIND:-127.0.0.1}:${HARNESS_PORT:-8080}:8080"
     restart: unless-stopped

@@ -89,7 +89,7 @@ export class SessionsView {
     name.append(svg(FOLDER_ICON), el('span', '', folder ? `workspace/${folder}` : 'workspace'));
     name.addEventListener('click', () => this.onOpenFolder(folder));
     const count = el('span', 'project-count', `${list.length} ${list.length === 1 ? 'session' : 'sessions'}`);
-    if (s.running && s.folder === folder) count.append(el('span', 'badge live', 'running'));
+    if (s.runningIn(folder)) count.append(el('span', 'badge live', 'running'));
     const start = el('button', 'ghost small');
     start.type = 'button';
     start.title = `Start a new session in ${folder ? `/workspace/${folder}` : '/workspace'}`;
@@ -99,7 +99,7 @@ export class SessionsView {
     box.append(head);
 
     for (const item of list) {
-      const running = s.running && s.sessionId === item.id;
+      const running = s.isRunning(item.id);
       const row = el('div', running ? 'session-line running' : 'session-line');
       const text = el('div', 'session-line-text');
       text.append(el('span', 'session-name', item.title || item.lastPrompt || 'Untitled conversation'));
@@ -107,7 +107,11 @@ export class SessionsView {
       row.title = [item.title, item.lastPrompt].filter(Boolean).join('\n');
       row.append(text, el('span', 'session-time', when(item.mtime)));
       if (running) {
-        row.append(el('span', 'session-running', 'Running'));
+        // Resuming a running conversation opens its session.
+        const open = el('button', 'ghost small', 'Open');
+        open.type = 'button';
+        open.addEventListener('click', () => this.onStart({ folder, resume: item.id }));
+        row.append(el('span', 'session-running', 'Running'), open);
       } else {
         const resume = el('button', 'ghost small', 'Resume');
         resume.type = 'button';

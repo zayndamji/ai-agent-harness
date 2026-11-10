@@ -121,12 +121,12 @@ export class FilesView {
     this.list.replaceChildren(...parts.filter(Boolean));
   }
 
-  // "Start session here" says what it will do: start, or switch from the running session.
+  // "Start session here" says whether this folder already has one running;
+  // a new one runs beside it.
   renderStartButton() {
-    const s = this.session();
-    const here = s.running && s.folder === this.dir;
-    this.startHere.querySelector('span:not(.icon)').textContent = here ? 'New session here' : s.running ? 'Switch to this folder' : 'Start session here';
-    this.startHere.title = s.running ? `Stops the running session in ${s.folder ? `/workspace/${s.folder}` : '/workspace'} first` : `Start Claude Code in ${this.label}`;
+    const here = this.session().runningIn(this.dir);
+    this.startHere.querySelector('span:not(.icon)').textContent = here ? 'New session here' : 'Start session here';
+    this.startHere.title = here ? `Start another session in ${this.label}` : `Start Claude Code in ${this.label}`;
   }
 
   // Earlier conversations in this folder, newest first, each one resumable.
@@ -142,7 +142,7 @@ export class FilesView {
     panel.append(head);
     const shown = sessions.slice(0, 8);
     for (const item of shown) {
-      const running = s.running && s.sessionId === item.id;
+      const running = s.isRunning(item.id);
       const row = el('div', 'session-row');
       const text = el('div', 'session-text');
       text.append(el('div', 'session-name', item.title || item.lastPrompt || 'Untitled conversation'));
@@ -150,7 +150,11 @@ export class FilesView {
       const meta = el('span', 'session-time', ago(item.mtime));
       let action;
       if (running) {
-        action = el('span', 'session-running', 'Running');
+        // Resuming a running conversation opens its session.
+        action = el('span', 'session-actions');
+        const open = button('ghost small', 'Open');
+        open.addEventListener('click', () => this.onStart({ folder: this.dir, resume: item.id }));
+        action.append(el('span', 'session-running', 'Running'), open);
       } else {
         action = button('ghost small', 'Resume');
         action.addEventListener('click', () => this.onStart({ folder: this.dir, resume: item.id }));
@@ -204,7 +208,7 @@ export class FilesView {
     name.append(el('span', 'file-label', entry.name + (entry.link ? ' →' : '')));
     if (entry.type === 'dir') {
       const s = this.session();
-      if (s.running && s.folder === path) name.append(el('span', 'badge live', 'session running'));
+      if (s.runningIn(path)) name.append(el('span', 'badge live', 'session running'));
       if (entry.git) {
         const git = el('span', 'badge');
         git.append(svg(GIT_ICON), document.createTextNode('git'));

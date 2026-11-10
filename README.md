@@ -4,7 +4,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 ## What it does
 
-- Starts a Claude Code session from a Start session button in the browser.
+- Runs several Claude Code sessions at once, listed in a sidebar with what each is doing: working, waiting for your answer, or ready.
 - Sends your keystrokes and messages to the session and streams its output back.
 - Types what you write in the message box into Claude Code as you type it, key by key, like a person at the terminal, and pastes it on Send when it can't be typed exactly.
 - Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results one by one.
@@ -13,18 +13,18 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
 - Notifies you when Claude finishes or needs an answer while the tab is in the background.
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
-- Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders.
+- Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders. Several sessions can share a folder.
 - Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
 - Has a Usage tab: tokens and estimated cost per day, the current 5-hour block, breakdowns by project, token type and model, and every session, day and block in detail, from [ccusage](https://github.com/ccusage/ccusage) running offline.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
-- Keeps the session running when the browser closes, and shows the current screen when you come back.
+- Keeps sessions running when the browser closes, and shows the current screen when you come back. Each browser tab can show a different session.
 - Keeps the session's files in container volumes, never in the host's home directory.
 - Puts a password in front of the web UI.
 
 ## How it works
 
 - A Docker image holds the `claude` CLI and the server (`server/`).
-- The server runs `claude` in a pseudo-terminal and streams its output to the browser over a WebSocket.
+- The server runs each session's `claude` in its own pseudo-terminal and streams the one a browser is looking at over a WebSocket.
 - The browser draws the terminal with xterm.js. Keys typed in the terminal go back to `claude`.
 - Each change in the message box goes to the server, which presses the same keys in Claude Code's input box (characters, Backspace, arrow keys) and checks the box on screen afterwards. Send presses Enter.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
@@ -37,7 +37,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 
 ## Run the web UI
@@ -53,7 +53,7 @@ docker compose logs -f web                 # follow the server's log
 
 Open the address `./start.sh` prints (http://127.0.0.1:8080 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
 
-The web UI listens only on this computer. To reach it from other machines on your network, set `HARNESS_BIND=0.0.0.0` in `.env`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`.
+The web UI listens only on this computer. To reach it from other machines on your network, set `HARNESS_BIND=0.0.0.0` in `.env`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 
 ## Run Claude Code in your terminal
 
@@ -71,7 +71,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
 | Single session web UI | ✅ | |
-| Several sessions with message passing | 🟡 | Session list in the UI |
+| Several sessions with message passing | 🟡 | Message routing between sessions |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
 ### Sandboxed Claude Code container
@@ -96,7 +96,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 
 - Done when: 2 or 3 sessions run at once and can send each other messages through the server.
 - ✅ Each session in its own slot on the server, with WebSocket messages per slot (`server/slots.js`)
-- ⬜ Session list in the UI
+- ✅ Several sessions at once with a session list in the UI (`server/public/sidebar.js`)
 - ⬜ Message routing between sessions
 
 ### Always-on Raspberry Pi

@@ -181,8 +181,11 @@ function toEntries(line, { sidechain = false } = {}) {
 const emptyMeta = () => ({ title: null, model: null, permissionMode: null, contextTokens: null, outputTokens: 0 });
 
 class TranscriptFollower extends EventEmitter {
-  constructor(cwd) {
+  // `claimedElsewhere(id)`: whether another session follows the transcript
+  // with that id. The follower never switches to one of those.
+  constructor(cwd, { claimedElsewhere = () => false } = {}) {
     super();
+    this.claimedElsewhere = claimedElsewhere;
     this.dir = projectDir(cwd);
     this.entries = [];
     this.meta = emptyMeta();
@@ -257,7 +260,8 @@ class TranscriptFollower extends EventEmitter {
   }
 
   // The session's own file wins unless another file in the folder was
-  // written after it since the session started (/clear, /resume).
+  // written after it since the session started (/clear, /resume). Files that
+  // other sessions in the same folder follow don't count.
   newestFile() {
     let best = null;
     let own = null;
@@ -273,6 +277,7 @@ class TranscriptFollower extends EventEmitter {
       try {
         const { mtimeMs } = fs.statSync(file);
         if (this.sessionId && name === `${this.sessionId}.jsonl`) own = { file, mtimeMs };
+        else if (this.claimedElsewhere(name.slice(0, -'.jsonl'.length))) continue;
         else if (mtimeMs >= this.since && (!best || mtimeMs > best.mtimeMs)) best = { file, mtimeMs };
       } catch {
         // The file went away between readdir and stat.

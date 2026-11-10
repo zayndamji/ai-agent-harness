@@ -16,24 +16,43 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class StartError extends Error {}
 
+// start {folder?, resume?}: folder is relative to the workspace; resume is
+// 'latest', a session id from that folder, or absent for a new session.
+// Returns the folder and the session id to run, or throws StartError with a
+// message for the browser. New sessions get an id from the server
+// (--session-id), so the Chat tab follows exactly that transcript.
+function resolveStart(files, { folder: wanted, resume }) {
+  let folder;
+  try {
+    folder = files.folder(wanted || '');
+  } catch (err) {
+    throw new StartError(err.code === 'ENOENT' ? 'That folder does not exist.' : `Can't start there: ${err.message}`);
+  }
+  let sessionId = resume;
+  if (sessionId === 'latest') sessionId = listSessions(folder.real)[0]?.id;
+  if (sessionId && !UUID.test(sessionId)) throw new StartError('That session id is not valid.');
+  if (sessionId && !listSessions(folder.real).some((s) => s.id === sessionId)) throw new StartError('That session is not in this folder.');
+  return { folder, sessionId: sessionId || crypto.randomUUID(), resuming: Boolean(sessionId) };
+}
+
 // Messages to the browsers attached to a slot are emitted as 'message'; the
 // server adds the slot's id and sends them. 'changed' means the summary in
 // the slot list may have changed.
 class Slot extends EventEmitter {
-  constructor({ command, args, env, workdir, files }) {
+  // `claimedElsewhere(id, slot)` says whether another slot has the
+  // transcript with that session id, so this one never switches to it.
+  constructor({ command, args, env, workdir, claimedElsewhere }) {
     super();
     this.sid = crypto.randomBytes(6).toString('hex');
     this.args = args;
-    this.files = files;
     this.folder = '';
     this.session = new Session({ command, args, cwd: workdir, env });
-    this.transcript = new TranscriptFollower(workdir);
+    this.transcript = new TranscriptFollower(workdir, { claimedElsewhere: (id) => claimedElsewhere(id, this) });
     this.typist = new Typist(this.session);
     this.tuiStatus = null;
     this.tuiTimer = null;
     this.answering = false;
     this.stopRequested = false;
-    this.replaced = false;
 
     this.session.on('start', () => {
       this.typist.reset();
@@ -51,7 +70,7 @@ class Slot extends EventEmitter {
       this.typist.reset();
       this.tuiStatus = null;
       this.send({ type: 'tui', status: null });
-      this.send({ type: 'exit', exitCode, signal, stopped: this.stopRequested, replaced: this.replaced });
+      this.send({ type: 'exit', exitCode, signal, stopped: this.stopRequested });
       this.stopRequested = false;
       this.send(this.state());
       this.emit('changed');
@@ -85,6 +104,12 @@ class Slot extends EventEmitter {
 
   get sessionId() {
     return this.running ? this.transcript.currentSessionId : null;
+  }
+
+  // Whether this slot is running the conversation with that session id: the
+  // one it started with, or the one it follows now.
+  claims(id) {
+    return this.running && (this.transcript.sessionId === id || this.transcript.currentSessionId === id);
   }
 
   state() {
@@ -131,24 +156,9 @@ class Slot extends EventEmitter {
     });
   }
 
-  // start {cols, rows, folder?, resume?}: folder is relative to the
-  // workspace; resume is 'latest', a session id from that folder, or absent
-  // for a new session. New sessions get an id from the server
-  // (--session-id), so the Chat tab follows exactly that transcript. Throws
+  // Starts `claude` for a start resolved by resolveStart(). Throws
   // StartError with a message for the browser.
-  start({ cols, rows, folder: wanted, resume }) {
-    let folder;
-    try {
-      folder = this.files.folder(wanted || '');
-    } catch (err) {
-      throw new StartError(err.code === 'ENOENT' ? 'That folder does not exist.' : `Can't start there: ${err.message}`);
-    }
-    let sessionId = resume;
-    if (sessionId === 'latest') sessionId = listSessions(folder.real)[0]?.id;
-    if (sessionId && !UUID.test(sessionId)) throw new StartError('That session id is not valid.');
-    if (sessionId && !listSessions(folder.real).some((s) => s.id === sessionId)) throw new StartError('That session is not in this folder.');
-    const resuming = Boolean(sessionId);
-    sessionId ||= crypto.randomUUID();
+  start({ folder, sessionId, resuming }, cols, rows) {
     const args = [...this.args, ...(resuming ? ['--resume', sessionId] : ['--session-id', sessionId])];
     try {
       this.folder = folder.rel;
@@ -244,4 +254,4 @@ class Slot extends EventEmitter {
   }
 }
 
-module.exports = { Slot, StartError };
+module.exports = { Slot, StartError, resolveStart };

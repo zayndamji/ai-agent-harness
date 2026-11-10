@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
-const { Slot, StartError } = require('./slots');
+const { Slot, StartError, resolveStart } = require('./slots');
 const { FilesApi } = require('./files');
 const { UsageReports } = require('./usage');
 
@@ -19,6 +19,8 @@ const WORKDIR = process.env.HARNESS_WORKDIR || '/workspace';
 // Only for testing the harness without Claude, for example `bash`.
 const CLAUDE_COMMAND = process.env.HARNESS_CLAUDE_COMMAND || 'claude';
 const CLAUDE_ARGS = (process.env.HARNESS_CLAUDE_ARGS || '').split(/\s+/).filter(Boolean);
+// Each `claude` takes a few hundred MB, so a small machine may want fewer.
+const MAX_SESSIONS = Math.max(1, Number.parseInt(process.env.HARNESS_MAX_SESSIONS, 10) || 10);
 const COOKIE = 'harness';
 const COOKIE_MAX_AGE = 30 * 24 * 3600; // seconds
 const MAX_FAILURES_PER_MINUTE = 10;
@@ -41,6 +43,7 @@ const FILES = {
   '/sessions.js': { file: path.join(PUBLIC, 'sessions.js'), type: 'text/javascript', auth: true },
   '/dialog.js': { file: path.join(PUBLIC, 'dialog.js'), type: 'text/javascript', auth: true },
   '/jobs.js': { file: path.join(PUBLIC, 'jobs.js'), type: 'text/javascript', auth: true },
+  '/sidebar.js': { file: path.join(PUBLIC, 'sidebar.js'), type: 'text/javascript', auth: true },
   '/usage-view.js': { file: path.join(PUBLIC, 'usage-view.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
@@ -338,43 +341,66 @@ function attach(client, sid) {
   });
 }
 
+// Every session id a slot has started with or followed since the server
+// started. A slot's transcript follower switches to a newer file in its
+// folder after /clear or /resume, but never to one of these unless it is its
+// own: two sessions in one folder would otherwise take each other's chat,
+// also after one of them ends.
+const knownIds = new Set();
+function claimedElsewhere(id, self) {
+  return knownIds.has(id) && id !== self.transcript.sessionId && id !== self.transcript.currentSessionId;
+}
+
 function createSlot() {
-  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, files });
+  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, claimedElsewhere });
   slot.on('message', (message) => sendToSlot(slot.sid, message));
-  slot.on('changed', () => slots.has(slot.sid) && broadcastSlots());
-  slot.on('exit', () => {
-    if (!pendingStart || pendingStart.replacing !== slot) return;
-    const { client, msg } = pendingStart;
-    pendingStart = null;
-    startSlot(client, msg);
+  slot.on('changed', () => {
+    if (slot.sessionId) knownIds.add(slot.sessionId);
+    if (slots.has(slot.sid)) broadcastSlots();
   });
   return slot;
 }
 
+// Browsers attached to a removed slot move to another one when they see it
+// gone from the list.
 function removeSlot(slot) {
   slots.delete(slot.sid);
   slot.dispose();
 }
 
-// A start that asked to replace the running session waits here until it exits.
-let pendingStart = null;
+// Ended sessions stay in the list, with their last screen, until a browser
+// closes them. Past this many, the oldest ended ones go.
+const MAX_SLOTS = MAX_SESSIONS * 2;
 
 // Starts a session in a new slot and attaches the browser that asked for it.
-// One session at a time: the slots of earlier, ended sessions are removed
-// once the new one has started.
+// Resuming a conversation that a slot is already running opens that slot
+// instead, so two processes never write one transcript.
 function startSlot(client, msg) {
-  const slot = createSlot();
+  const fail = (message) => sendTo(client, { type: 'error', message });
+  let start;
   try {
-    slot.start(msg);
+    start = resolveStart(files, msg);
+  } catch (err) {
+    if (!(err instanceof StartError)) throw err;
+    return fail(err.message);
+  }
+  const all = [...slots.values()];
+  const already = start.resuming && all.find((s) => s.claims(start.sessionId));
+  if (already) return attach(client, already.sid);
+  if (all.filter((s) => s.running).length >= MAX_SESSIONS) {
+    return fail(`${MAX_SESSIONS} sessions are running, the most allowed. Stop one to start another.`);
+  }
+  const slot = createSlot();
+  knownIds.add(start.sessionId);
+  try {
+    slot.start(start, msg.cols, msg.rows);
   } catch (err) {
     slot.dispose();
     if (!(err instanceof StartError)) throw err;
-    return sendTo(client, { type: 'error', message: err.message });
+    return fail(err.message);
   }
-  for (const old of slots.values()) if (!old.running) removeSlot(old);
   slots.set(slot.sid, slot);
-  // Attached before the new list goes out, so this browser doesn't also
-  // move itself there when it sees its old slot gone.
+  for (const old of [...slots.values()].filter((s) => !s.running).slice(0, Math.max(0, slots.size - MAX_SLOTS))) removeSlot(old);
   attach(client, slot.sid);
   broadcastSlots();
 }
@@ -395,17 +421,8 @@ function handleMessage(client, raw) {
     return;
   }
   if (msg.type === 'start') {
-    if (!size(msg.cols) || !size(msg.rows)) return;
-    const running = [...slots.values()].find((s) => s.running);
-    if (running) {
-      // One session at a time: replacing stops the current one first.
-      if (!msg.replace || pendingStart) return;
-      pendingStart = { client, msg, replacing: running };
-      running.replaced = true;
-      running.stop();
-      return;
-    }
-    return startSlot(client, msg);
+    if (size(msg.cols) && size(msg.rows)) startSlot(client, msg);
+    return;
   }
   if (msg.type === 'attach') return attach(client, msg.sid);
   // Everything else acts on one slot, named by `sid`.
@@ -430,6 +447,13 @@ function handleMessage(client, raw) {
       return;
     case 'stop':
       slot.stop();
+      return;
+    case 'close':
+      // Only an ended session can be closed; a running one is stopped first.
+      if (!slot.running) {
+        removeSlot(slot);
+        broadcastSlots();
+      }
       return;
   }
 }
