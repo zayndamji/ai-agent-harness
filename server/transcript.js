@@ -31,7 +31,20 @@ function commandEntry(text) {
   if (name !== undefined) return { kind: 'command', text: `${name} ${tag(text, 'command-args') || ''}`.trim() };
   const stdout = tag(text, 'local-command-stdout');
   if (stdout !== undefined) return { kind: 'command-output', text: clip(stdout.replace(ANSI, '').trim()) };
-  return null;
+  return shellEntry(text);
+}
+
+// A shell-mode command ("!ls" in the input box) is written as a user line
+// with <bash-input>, and its result as the next user line with <bash-stdout>
+// and <bash-stderr>.
+function shellEntry(text) {
+  const input = tag(text, 'bash-input');
+  if (input !== undefined) return { kind: 'shell', text: input.trim() };
+  const stdout = tag(text, 'bash-stdout');
+  const stderr = tag(text, 'bash-stderr');
+  if (stdout === undefined && stderr === undefined) return null;
+  const clean = (s) => clip((s || '').replace(ANSI, '').replace(/\s+$/, ''));
+  return { kind: 'shell-output', stdout: clean(stdout), stderr: clean(stderr) };
 }
 
 function resultText(content) {
@@ -322,7 +335,8 @@ class TranscriptFollower extends EventEmitter {
           this.recentCommands = [];
         }
         entry.id = `${line.uuid || this.main.offset}:${added.length}`;
-        if (entry.kind === 'user') {
+        // Claude Code answers a shell command too, so it starts a turn.
+        if (entry.kind === 'user' || entry.kind === 'shell') {
           this.turnTokens = 0;
           this.setBusy(true);
         }

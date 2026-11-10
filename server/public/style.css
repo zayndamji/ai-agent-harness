@@ -350,6 +350,13 @@ body.app {
   overflow-wrap: anywhere;
 }
 .msg.user.pending .bubble { opacity: 0.55; }
+/* A shell-mode command ("!ls") and its output. */
+.msg.user .bubble.shell { font: 13px/1.5 var(--mono); }
+.shell-prompt { color: var(--accent); font-weight: 700; }
+.shell-output { align-self: stretch; }
+.shell-output pre { padding: 8px 10px; border-radius: 6px; background: var(--bg-sunken); max-height: 300px; overflow: auto; }
+.shell-output pre.stderr { color: var(--danger); }
+.shell-output .tool-label:first-child { margin-top: 0; }
 .msg.user .pending-label { display: block; margin-top: 4px; padding-right: 6px; text-align: right; font-size: 11px; color: var(--muted); }
 .msg.assistant { font-size: 15px; line-height: 1.65; overflow-wrap: anywhere; }
 

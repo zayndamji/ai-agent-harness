@@ -614,6 +614,23 @@ export class ChatView {
         }
         return null;
       }
+      case 'shell': {
+        // Sent from the message box as "!command".
+        this.settlePending(`!${entry.text}`);
+        const node = el('div', 'msg user');
+        const bubble = el('div', 'bubble shell');
+        bubble.append(el('span', 'shell-prompt', '!'), document.createTextNode(` ${entry.text}`));
+        if (entry.at) bubble.title = `Shell command · ${new Date(entry.at).toLocaleString()}`;
+        node.append(bubble);
+        return node;
+      }
+      case 'shell-output': {
+        const node = el('div', 'shell-output');
+        if (entry.stdout) node.append(el('pre', '', clipChars(entry.stdout)));
+        if (entry.stderr) node.append(el('div', 'tool-label', 'Stderr'), el('pre', 'stderr', clipChars(entry.stderr)));
+        if (!entry.stdout && !entry.stderr) node.append(el('div', 'tool-label', 'No output'));
+        return node;
+      }
       case 'command':
         return el('div', 'command', entry.text);
       case 'command-output': {
