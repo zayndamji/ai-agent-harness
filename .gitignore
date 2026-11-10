@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Container volumes and local state
+data/
+workspaces/
+
+# Workspace-specific agent memory and each person's Claude Code settings
+context/workspace-specific-memory.md
+.claude/settings.local.json
