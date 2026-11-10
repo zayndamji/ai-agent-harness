@@ -50,10 +50,18 @@ const chat = new ChatView({
   },
 });
 
+// The server keeps each session in a slot. This page looks at one of them,
+// `sid` (null when there is none); `slots` lists them all.
+let sid = null;
+let slots = [];
+// True from connecting or sending `attach` until the server says which slot
+// this page is attached to.
+let attaching = true;
+
 // What the browsers know about the running session, for the Files and Sessions tabs.
 let current = { running: false, folder: '', sessionId: null };
 const sessionInfo = () => current;
-const jobsPanel = new JobsPanel({ root: $('jobs-panel'), toggle: $('jobs-toggle'), count: $('jobs-count'), chat });
+const jobsPanel = new JobsPanel({ root: $('jobs-panel'), toggle: $('jobs-toggle'), count: $('jobs-count'), chat, sid: () => sid });
 const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
 const usageView = new UsageView($('view-usage'), { onStart: (opts) => startSession(opts), onOpenFolder: (folder) => openFolder(folder) });
 const sessionsView = new SessionsView($('view-sessions'), {
@@ -72,6 +80,29 @@ let unseen = 0;
 
 function sendJson(msg) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+// Keys, messages, answers, resizes and stop go to the slot on this page.
+function sendSlot(msg) {
+  if (sid) sendJson({ ...msg, sid });
+}
+
+function attach(next) {
+  attaching = true;
+  sendJson({ type: 'attach', sid: next });
+}
+
+// The slot to look at when this page's one is gone: the newest running one,
+// or else the newest.
+function defaultSlot() {
+  return slots.filter((s) => s.running).pop() || slots[slots.length - 1] || null;
+}
+
+function onSlots(list) {
+  slots = list;
+  if (attaching || slots.some((s) => s.sid === sid)) return;
+  const next = defaultSlot();
+  if (next) attach(next.sid);
 }
 
 const store = {
@@ -321,7 +352,7 @@ function renderDialog(dialog) {
 function answer(dialog, option, text) {
   for (const b of $('dialog-options').querySelectorAll('button, input')) b.disabled = true;
   showDialogError(`Sending “${option.n === dialog.freeText ? text : option.label}”…`, true);
-  sendJson({ type: 'answer', question: dialog.question, option: option.n, text });
+  sendSlot({ type: 'answer', question: dialog.question, option: option.n, text });
 }
 
 function showDialogError(text, quiet) {
@@ -360,19 +391,31 @@ function showState(isRunning, exitText) {
 
 function connect() {
   setStatus('connecting', 'Connecting');
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  // After a reconnect, ask for the same slot again.
+  const query = sid ? `?sid=${encodeURIComponent(sid)}` : '';
+  attaching = true;
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws${query}`);
   ws.onopen = () => {
     retryDelay = 500;
   };
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+    // A slot's messages carry its id; drop any for a slot this page left.
+    if ('sid' in msg && msg.type !== 'attached' && msg.sid !== sid) return;
     switch (msg.type) {
+      case 'slots':
+        onSlots(msg.slots);
+        break;
+      case 'attached':
+        sid = msg.sid;
+        attaching = false;
+        break;
       case 'state': {
         const moved = current.folder !== (msg.folder || '') || current.sessionId !== msg.sessionId;
         current = { running: msg.running, folder: msg.folder || '', sessionId: msg.sessionId || null };
         showState(msg.running);
         renderFolderChip();
-        if (msg.running) sendJson({ type: 'resize', cols: term.cols, rows: term.rows });
+        if (msg.running) sendSlot({ type: 'resize', cols: term.cols, rows: term.rows });
         // The lists mark the running session, so redraw the open one.
         if (moved || !msg.running) {
           if (view === 'files') filesView.load();
@@ -440,9 +483,9 @@ function connect() {
   };
 }
 
-term.onData((data) => sendJson({ type: 'input', data }));
+term.onData((data) => sendSlot({ type: 'input', data }));
 term.onResize(({ cols, rows }) => {
-  if (running) sendJson({ type: 'resize', cols, rows });
+  if (running) sendSlot({ type: 'resize', cols, rows });
 });
 new ResizeObserver(fitTerminal).observe(terminalEl);
 
@@ -485,11 +528,11 @@ $('choose-session').addEventListener('click', () => showView('sessions'));
 
 stopBtn.addEventListener('click', async () => {
   const ok = await confirmAction('Stop the session?', `Claude Code exits. The conversation is kept and can be resumed from the Sessions tab.`, 'Stop session', true);
-  if (ok) sendJson({ type: 'stop' });
+  if (ok) sendSlot({ type: 'stop' });
 });
 
 // Escape is how Claude Code's terminal interrupts a turn.
-$('interrupt').addEventListener('click', () => sendJson({ type: 'input', data: '\x1b' }));
+$('interrupt').addEventListener('click', () => sendSlot({ type: 'input', data: '\x1b' }));
 
 // ---- Message box, shared by both tabs. Every change goes to the server,
 // which types it into Claude Code's input box key by key (server/typist.js);
@@ -498,13 +541,13 @@ $('interrupt').addEventListener('click', () => sendJson({ type: 'input', data: '
 function compose(event) {
   if (!running || event?.isComposing) return;
   const paste = ['insertFromPaste', 'insertFromDrop', 'insertFromPasteAsQuotation'].includes(event?.inputType);
-  sendJson({ type: 'compose', text: message.value, caret: message.selectionEnd, paste });
+  sendSlot({ type: 'compose', text: message.value, caret: message.selectionEnd, paste });
 }
 
 function sendMessage() {
   const text = message.value;
   if (!text.trim() || !running) return;
-  sendJson({ type: 'submit', text });
+  sendSlot({ type: 'submit', text });
   if (!text.trim().startsWith('/')) chat.addPending(text, busy);
   message.value = '';
   message.style.height = '';

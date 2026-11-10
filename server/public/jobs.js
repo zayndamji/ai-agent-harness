@@ -39,8 +39,10 @@ function statusLine(job) {
 }
 
 export class JobsPanel {
-  constructor({ root, toggle, count, chat }) {
+  constructor({ root, toggle, count, chat, sid }) {
     this.root = root;
+    // The slot the page is attached to, for fetching a command's output.
+    this.sid = sid;
     this.toggle = toggle;
     this.count = count;
     this.chat = chat;
@@ -213,7 +215,7 @@ export class JobsPanel {
     if (cached?.loading) return;
     this.output.set(job.key, { ...cached, loading: true });
     try {
-      const res = await fetch(`/api/task-output?task=${encodeURIComponent(job.taskId)}`);
+      const res = await fetch(`/api/task-output?sid=${encodeURIComponent(this.sid() || '')}&task=${encodeURIComponent(job.taskId)}`);
       const data = await res.json();
       const gone = job.status === 'running'
         ? 'No output yet.'

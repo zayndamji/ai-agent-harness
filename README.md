@@ -37,7 +37,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 
 ## Run the web UI
@@ -71,7 +71,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
 | Single session web UI | ✅ | |
-| Several sessions with message passing | ⬜ | Session list in the UI |
+| Several sessions with message passing | 🟡 | Session list in the UI |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
 ### Sandboxed Claude Code container
@@ -95,6 +95,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 ### Several sessions with message passing
 
 - Done when: 2 or 3 sessions run at once and can send each other messages through the server.
+- ✅ Each session in its own slot on the server, with WebSocket messages per slot (`server/slots.js`)
 - ⬜ Session list in the UI
 - ⬜ Message routing between sessions
 

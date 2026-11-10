@@ -1,6 +1,7 @@
 'use strict';
-// Web UI for one Claude Code session: a password login, a pseudo-terminal
-// running `claude`, and a WebSocket that streams it to xterm.js in the browser.
+// Web UI for Claude Code sessions: a password login, a pseudo-terminal per
+// session running `claude` (slots.js), and a WebSocket that streams the one a
+// browser is looking at to xterm.js.
 
 const crypto = require('node:crypto');
 const os = require('node:os');
@@ -8,12 +9,9 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
-const { Session } = require('./session');
-const { TranscriptFollower, listSessions } = require('./transcript');
-const { readStatus } = require('./screen');
+const { Slot, StartError } = require('./slots');
 const { FilesApi } = require('./files');
 const { UsageReports } = require('./usage');
-const { Typist } = require('./typist');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -162,14 +160,14 @@ function handleLogout(req, res) {
 const FILE_APIS = new Set(['/api/files', '/api/file', '/api/archive', '/api/sessions']);
 const json = (res, status, body) => send(res, status, { 'Content-Type': 'application/json' }, JSON.stringify(body));
 
-// GET /api/task-output?task=<id>: the live output of a background command in
-// the running session. Claude Code writes it to
-// <tmp>/claude-<uid>/<project>/<session id>/tasks/<task id>.output; only the
-// current session's folder is searched.
+// GET /api/task-output?sid=<slot>&task=<id>: the live output of a background
+// command in a running session. Claude Code writes it to
+// <tmp>/claude-<uid>/<project>/<session id>/tasks/<task id>.output; only that
+// session's folder is searched.
 const TASK_OUTPUT_MAX = 64 * 1024;
 const ANSI_CODES = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
-function taskOutput(res, taskId) {
-  const sessionId = session.running ? transcript.currentSessionId : null;
+function taskOutput(res, sid, taskId) {
+  const sessionId = slots.get(sid)?.sessionId;
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(taskId || '') || !sessionId) return json(res, 404, { error: 'no such task' });
   const tmp = os.tmpdir();
   let roots = [];
@@ -242,7 +240,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'GET' && pathname === '/api/task-output') {
     if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
-    return taskOutput(res, searchParams.get('task'));
+    return taskOutput(res, searchParams.get('sid'), searchParams.get('task'));
   }
   if (req.method === 'POST' && pathname === '/login') return void handleLogin(req, res);
   if (req.method === 'POST' && pathname === '/logout') return handleLogout(req, res);
@@ -250,7 +248,7 @@ const server = http.createServer((req, res) => {
   if (pathname === '/login') return tokenOf(req) ? send(res, 303, { Location: '/' }) : loginPage(res);
   if (pathname === '/api/status') {
     if (!tokenOf(req)) return send(res, 401, { 'Content-Type': 'application/json' }, '{"loggedIn":false}');
-    return send(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify({ loggedIn: true, running: session.running }));
+    return send(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify({ loggedIn: true, running: anyRunning() }));
   }
   const entry = FILES[pathname];
   if (!entry) return send(res, 404, {}, 'Not found');
@@ -258,191 +256,136 @@ const server = http.createServer((req, res) => {
   send(res, 200, { 'Content-Type': entry.type }, req.method === 'HEAD' ? '' : entry.body);
 });
 
-// ---- The session and its WebSocket clients
+// ---- Sessions and their WebSocket clients
+//
+// Each session lives in a slot (slots.js). A browser attaches to one slot
+// and gets its screen, chat and status; every browser gets the list of slots.
 
 const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 for (const key of Object.keys(env)) if (key.startsWith('HARNESS_')) delete env[key];
-const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: WORKDIR, env });
-const transcript = new TranscriptFollower(WORKDIR);
 const files = new FilesApi(WORKDIR);
 const usage = new UsageReports({ root: WORKDIR, env: process.env });
-// Types the Chat tab's message box into Claude Code as the user types (typist.js).
-const typist = new Typist(session);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
-// The live status read from the terminal screen (screen.js), sent only
-// when it changes. Reading waits a little after output so bursts are read once.
-let tuiStatus = null;
-let tuiTimer = null;
-function scheduleStatus() {
-  if (tuiTimer) return;
-  tuiTimer = setTimeout(() => {
-    tuiTimer = null;
-    session.withScreen((mirror) => {
-      const next = session.running ? readStatus(mirror) : null;
-      if (JSON.stringify(next) === JSON.stringify(tuiStatus)) return;
-      tuiStatus = next;
-      broadcast({ type: 'tui', status: tuiStatus });
-    });
-  }, 250);
-}
-// The spinner's clock ticks every second without other output changing, and
-// output can stop while a dialog waits, so also read once a second.
-setInterval(() => session.running && scheduleStatus(), 1000).unref();
+// In start order, oldest first.
+const slots = new Map();
+const anyRunning = () => [...slots.values()].some((s) => s.running);
 
-// The session's folder relative to the workspace ('' is the workspace itself).
-let sessionFolder = '';
-
-function state() {
-  return {
-    type: 'state',
-    running: session.running,
-    startedAt: session.startedAt,
-    folder: sessionFolder,
-    sessionId: session.running ? transcript.currentSessionId : null,
-  };
+// The slot a browser sees when it doesn't ask for one: the newest running
+// one, or else the newest.
+function defaultSlot() {
+  const all = [...slots.values()];
+  return all.filter((s) => s.running).pop() || all.pop() || null;
 }
 
-function broadcast(message) {
-  const text = JSON.stringify(message);
+function sendTo(client, message) {
+  if (client.readyState === client.OPEN) client.send(JSON.stringify(message));
+}
+
+// Sends a slot's message to the browsers attached to it. Browsers still
+// receiving the slot's snapshot get it queued, so nothing is lost or doubled.
+function sendToSlot(sid, message) {
+  const text = JSON.stringify({ ...message, sid });
   for (const client of wss.clients) {
-    if (client.readyState !== client.OPEN) continue;
+    if (client.readyState !== client.OPEN || client.sid !== sid) continue;
     if (client.live) client.send(text);
     else client.queue.push(text);
   }
 }
 
-// A client gets a reset and the current screen first, then live output.
-// Output that arrives while the snapshot is taken is queued, not lost.
-function attach(client) {
+let lastSlots = '';
+function slotsMessage() {
+  return { type: 'slots', slots: [...slots.values()].map((s) => s.summary()) };
+}
+function broadcastSlots() {
+  const text = JSON.stringify(slotsMessage());
+  if (text === lastSlots) return;
+  lastSlots = text;
+  for (const client of wss.clients) if (client.readyState === client.OPEN) client.send(text);
+}
+
+// What a browser attached to no slot gets: an empty, stopped session.
+const DETACHED = [
+  { type: 'state', running: false, startedAt: null, folder: '', sessionId: null },
+  { type: 'reset' },
+  { type: 'chat-reset' },
+  { type: 'chat-busy', busy: false },
+  { type: 'meta', meta: {} },
+  { type: 'tui', status: null },
+];
+
+// A client gets `attached {sid}`, the slot's snapshot, then its live messages.
+// Attaching again before a snapshot arrives drops the older one.
+function attach(client, sid) {
+  const slot = slots.get(sid) || null;
+  const gen = (client.attachGen || 0) + 1;
+  client.attachGen = gen;
+  client.sid = slot?.sid || null;
   client.live = false;
   client.queue = [];
-  session.snapshot((screen) => {
-    if (client.readyState !== client.OPEN) return;
-    client.send(JSON.stringify(state()));
-    client.send(JSON.stringify({ type: 'reset' }));
-    if (screen) client.send(JSON.stringify({ type: 'output', data: screen }));
-    client.send(JSON.stringify({ type: 'chat-reset' }));
-    if (transcript.entries.length) client.send(JSON.stringify({ type: 'chat', entries: transcript.entries }));
-    client.send(JSON.stringify({ type: 'chat-busy', busy: transcript.busy }));
-    client.send(JSON.stringify({ type: 'meta', meta: transcript.meta }));
-    client.send(JSON.stringify({ type: 'tui', status: tuiStatus }));
+  sendTo(client, { type: 'attached', sid: client.sid });
+  if (!slot) {
+    for (const message of DETACHED) sendTo(client, { ...message, sid: null });
+    client.live = true;
+    return;
+  }
+  slot.snapshot((messages) => {
+    if (client.readyState !== client.OPEN || client.attachGen !== gen) return;
+    for (const message of messages) client.send(JSON.stringify({ ...message, sid: slot.sid }));
     for (const text of client.queue) client.send(text);
     client.queue = [];
     client.live = true;
   });
 }
 
-session.on('start', () => {
-  typist.reset();
-  broadcast({ type: 'reset' });
-  broadcast(state());
-});
-session.on('output', (data) => {
-  broadcast({ type: 'output', data });
-  scheduleStatus();
-});
-transcript.on('reset', () => broadcast({ type: 'chat-reset' }));
-transcript.on('entries', (entries) => broadcast({ type: 'chat', entries }));
-transcript.on('busy', (busy) => broadcast({ type: 'chat-busy', busy }));
-transcript.on('meta', (meta) => broadcast({ type: 'meta', meta }));
-// After /clear or /resume inside the session, the session id changes.
-transcript.on('file', () => broadcast(state()));
+function createSlot() {
+  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, files });
+  slot.on('message', (message) => sendToSlot(slot.sid, message));
+  slot.on('changed', () => slots.has(slot.sid) && broadcastSlots());
+  slot.on('exit', () => {
+    if (!pendingStart || pendingStart.replacing !== slot) return;
+    const { client, msg } = pendingStart;
+    pendingStart = null;
+    startSlot(client, msg);
+  });
+  return slot;
+}
+
+function removeSlot(slot) {
+  slots.delete(slot.sid);
+  slot.dispose();
+}
 
 // A start that asked to replace the running session waits here until it exits.
 let pendingStart = null;
 
-session.on('exit', ({ exitCode, signal }) => {
-  console.log(`claude exited (code ${exitCode}, signal ${signal})`);
-  transcript.stop();
-  typist.reset();
-  tuiStatus = null;
-  broadcast({ type: 'tui', status: null });
-  broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested), replaced: Boolean(pendingStart) });
-  session.stopRequested = false;
-  broadcast(state());
-  if (pendingStart) {
-    const { client, msg } = pendingStart;
-    pendingStart = null;
-    startSession(client, msg);
+// Starts a session in a new slot and attaches the browser that asked for it.
+// One session at a time: the slots of earlier, ended sessions are removed
+// once the new one has started.
+function startSlot(client, msg) {
+  const slot = createSlot();
+  try {
+    slot.start(msg);
+  } catch (err) {
+    slot.dispose();
+    if (!(err instanceof StartError)) throw err;
+    return sendTo(client, { type: 'error', message: err.message });
   }
-});
+  for (const old of slots.values()) if (!old.running) removeSlot(old);
+  slots.set(slot.sid, slot);
+  // Attached before the new list goes out, so this browser doesn't also
+  // move itself there when it sees its old slot gone.
+  attach(client, slot.sid);
+  broadcastSlots();
+}
+
+// The spinner's clock ticks every second without other output changing, and
+// output can stop while a dialog waits, so also read once a second.
+setInterval(() => {
+  for (const slot of slots.values()) if (slot.running) slot.scheduleStatus();
+}, 1000).unref();
 
 const size = (n) => Number.isInteger(n) && n >= 2 && n <= 1000;
-
-// answer {question, option, text?}: picks a choice in the dialog on screen, the
-// way a person would: arrow keys from the highlighted choice to the chosen
-// one, then Enter. For "Type something." the text is typed before Enter. The
-// screen is read again first, and nothing is sent unless it still shows the
-// same question with that choice.
-let answering = false;
-function answerDialog(client, msg) {
-  const fail = (message) => client.send(JSON.stringify({ type: 'answer-failed', message }));
-  if (!session.running) return fail('No session is running.');
-  if (answering) return fail('Still sending the last answer.');
-  session.withScreen((mirror) => {
-    const dialog = readStatus(mirror).dialog;
-    if (!dialog || !dialog.answerable) return fail('That question is no longer on screen. Answer it in the Terminal tab.');
-    if (dialog.question !== msg.question) return fail('The question on screen changed. Check the Terminal tab.');
-    const option = dialog.options.find((o) => o.n === msg.option);
-    if (!option) return fail('That choice is no longer on screen.');
-    const text = typeof msg.text === 'string' ? msg.text.replace(/[\r\n]+/g, ' ').trim() : '';
-    if (option.n === dialog.freeText && !text) return fail('Type an answer first.');
-    // Arrow keys depend on the terminal's cursor key mode.
-    const app = mirror.modes.applicationCursorKeysMode;
-    const down = app ? '\x1bOB' : '\x1b[B';
-    const up = app ? '\x1bOA' : '\x1b[A';
-    const delta = option.n - dialog.selected;
-    const keys = Array(Math.abs(delta)).fill(delta > 0 ? down : up);
-    if (option.n === dialog.freeText) keys.push(text);
-    keys.push('\r');
-    answering = true;
-    const sendNext = () => {
-      if (!keys.length || !session.running) {
-        answering = false;
-        return;
-      }
-      session.write(keys.shift());
-      setTimeout(sendNext, 60);
-    };
-    sendNext();
-    typist.noteRawInput();
-    console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);
-  });
-}
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-// start {cols, rows, folder?, resume?}: folder is relative to the workspace;
-// resume is 'latest', a session id from that folder, or absent for a new
-// session. New sessions get an id from the server (--session-id), so the
-// Chat tab follows exactly that transcript.
-function startSession(client, msg) {
-  const fail = (message) => client.send(JSON.stringify({ type: 'error', message }));
-  let folder;
-  try {
-    folder = files.folder(msg.folder || '');
-  } catch (err) {
-    return fail(err.code === 'ENOENT' ? 'That folder does not exist.' : `Can't start there: ${err.message}`);
-  }
-  let sessionId = msg.resume;
-  if (sessionId === 'latest') sessionId = listSessions(folder.real)[0]?.id;
-  if (sessionId && !UUID.test(sessionId)) return fail('That session id is not valid.');
-  if (sessionId && !listSessions(folder.real).some((s) => s.id === sessionId)) return fail('That session is not in this folder.');
-  const resuming = Boolean(sessionId);
-  sessionId ||= crypto.randomUUID();
-  const args = [...CLAUDE_ARGS, ...(resuming ? ['--resume', sessionId] : ['--session-id', sessionId])];
-  try {
-    sessionFolder = folder.rel;
-    // A little slack, so a transcript created in the same second still counts.
-    transcript.start(Date.now() - 2000, { cwd: folder.real, sessionId });
-    session.start(msg.cols, msg.rows, { cwd: folder.real, args });
-    console.log(`claude started in /${folder.rel || ''} (${resuming ? `resuming ${sessionId}` : `new ${sessionId}`}, ${msg.cols}x${msg.rows})`);
-  } catch (err) {
-    transcript.stop();
-    console.error('could not start claude:', err.message);
-    fail(`Could not start claude: ${err.message}`);
-  }
-}
 
 function handleMessage(client, raw) {
   let msg;
@@ -451,48 +394,52 @@ function handleMessage(client, raw) {
   } catch {
     return;
   }
-  switch (msg.type) {
-    case 'start':
-      if (!size(msg.cols) || !size(msg.rows)) return;
-      if (session.running) {
-        // One session at a time: replacing stops the current one first.
-        if (!msg.replace) return;
-        pendingStart = { client, msg };
-        session.stopRequested = true;
-        session.stop();
-        return;
-      }
-      startSession(client, msg);
+  if (msg.type === 'start') {
+    if (!size(msg.cols) || !size(msg.rows)) return;
+    const running = [...slots.values()].find((s) => s.running);
+    if (running) {
+      // One session at a time: replacing stops the current one first.
+      if (!msg.replace || pendingStart) return;
+      pendingStart = { client, msg, replacing: running };
+      running.replaced = true;
+      running.stop();
       return;
+    }
+    return startSlot(client, msg);
+  }
+  if (msg.type === 'attach') return attach(client, msg.sid);
+  // Everything else acts on one slot, named by `sid`.
+  const slot = slots.get(msg.sid);
+  if (!slot) return;
+  const reply = (message) => sendTo(client, { ...message, sid: slot.sid });
+  switch (msg.type) {
     case 'input':
-      if (typeof msg.data !== 'string') return;
-      session.write(msg.data);
-      typist.noteRawInput();
+      if (typeof msg.data === 'string') slot.input(msg.data);
       return;
     case 'compose':
-      typist.compose(msg.text, msg.caret, msg.paste);
+      slot.typist.compose(msg.text, msg.caret, msg.paste);
       return;
     case 'submit':
-      typist.submit(msg.text, (message) => {
-        if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: 'send-failed', message, text: msg.text }));
-      });
+      slot.typist.submit(msg.text, (message) => reply({ type: 'send-failed', message, text: msg.text }));
       return;
     case 'answer':
-      answerDialog(client, msg);
+      slot.answer(msg, (message) => reply({ type: 'answer-failed', message }));
       return;
     case 'resize':
-      if (size(msg.cols) && size(msg.rows)) session.resize(msg.cols, msg.rows);
+      if (size(msg.cols) && size(msg.rows)) slot.resize(msg.cols, msg.rows);
       return;
     case 'stop':
-      session.stopRequested = true;
-      session.stop();
+      slot.stop();
       return;
   }
 }
 
+// /ws?sid=<slot>: the browser says which slot it was looking at; without one,
+// or if that slot is gone, it gets the default slot.
 server.on('upgrade', (req, socket, head) => {
   const token = tokenOf(req);
-  if (req.url !== '/ws' || !token || !sameOrigin(req, { required: true })) {
+  const url = new URL(req.url, 'http://localhost');
+  if (url.pathname !== '/ws' || !token || !sameOrigin(req, { required: true })) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
@@ -501,7 +448,9 @@ server.on('upgrade', (req, socket, head) => {
     client.alive = true;
     client.on('pong', () => (client.alive = true));
     client.on('message', (raw) => handleMessage(client, raw.toString()));
-    attach(client);
+    sendTo(client, slotsMessage());
+    const wanted = url.searchParams.get('sid');
+    attach(client, slots.has(wanted) ? wanted : defaultSlot()?.sid);
   });
 });
 
@@ -515,7 +464,7 @@ setInterval(() => {
 }, 30_000).unref();
 
 function shutdown() {
-  session.stop();
+  for (const slot of slots.values()) slot.stop();
   server.close();
   setTimeout(() => process.exit(0), 500).unref();
 }
