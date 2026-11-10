@@ -6,6 +6,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 - Starts a Claude Code session from a Start session button in the browser.
 - Sends your keystrokes and messages to the session and streams its output back.
+- Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results one by one.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
 - Keeps the session running when the browser closes, and shows the current screen when you come back.
 - Keeps the session's files in container volumes, never in the host's home directory.
@@ -17,7 +18,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - The server runs `claude` in a pseudo-terminal and streams its output to the browser over a WebSocket.
 - The browser draws the terminal with xterm.js. Keys typed in the terminal and text from the message box go back to `claude`.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
-- Design details and findings: `context/cli-wrapping.md` and `context/web-ui.md`.
+- The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
+- Design details and findings: `context/cli-wrapping.md`, `context/web-ui.md` and `context/chat-view.md`.
 
 ## Repository layout
 
@@ -25,7 +27,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `public/` (browser page) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `public/` (browser page) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 | `context/` | Agent memory: design notes, findings and guidelines |
 | `CLAUDE.md`, `AGENTS.md` | Instructions for Claude Code and Codex sessions |
@@ -60,7 +62,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | Goal | Status | Next step |
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
-| Single session web UI | 🟡 | Sign in from the web UI and send a first message |
+| Single session web UI | ✅ | |
 | Several sessions with message passing | ⬜ | Session list in the UI |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
@@ -76,7 +78,8 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ Server that spawns `claude` in a PTY (`server/session.js`)
 - ✅ Browser page with xterm.js, a Start session button and a message box (`server/public/`)
 - ✅ Password login (`server/server.js`)
-- 🟡 A signed-in session answering a message from the web UI
+- ✅ A signed-in session answering a message from the web UI
+- ✅ Chat tab with messages, tool calls and results (`server/transcript.js`, `server/public/chat.js`)
 
 ### Several sessions with message passing
 

@@ -8,10 +8,13 @@ const http = require('node:http');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { Session } = require('./session');
+const { TranscriptFollower } = require('./transcript');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
 const WORKDIR = process.env.HARNESS_WORKDIR || '/workspace';
+// Only for testing the harness without Claude, for example `bash`.
+const CLAUDE_COMMAND = process.env.HARNESS_CLAUDE_COMMAND || 'claude';
 const CLAUDE_ARGS = (process.env.HARNESS_CLAUDE_ARGS || '').split(/\s+/).filter(Boolean);
 const COOKIE = 'harness';
 const COOKIE_MAX_AGE = 30 * 24 * 3600; // seconds
@@ -25,10 +28,14 @@ if (PASSWORD.length < 8) {
 // ---- Static files, loaded once. Only these paths are served.
 
 const PUBLIC = path.join(__dirname, 'public');
-const XTERM = path.join(__dirname, 'node_modules', '@xterm');
+const MODULES = path.join(__dirname, 'node_modules');
+const XTERM = path.join(MODULES, '@xterm');
 const FILES = {
   '/': { file: path.join(PUBLIC, 'index.html'), type: 'text/html; charset=utf-8', auth: true },
   '/app.js': { file: path.join(PUBLIC, 'app.js'), type: 'text/javascript', auth: true },
+  '/chat.js': { file: path.join(PUBLIC, 'chat.js'), type: 'text/javascript', auth: true },
+  '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
+  '/vendor/purify.mjs': { file: path.join(MODULES, 'dompurify/dist/purify.es.mjs'), type: 'text/javascript', auth: true },
   '/style.css': { file: path.join(PUBLIC, 'style.css'), type: 'text/css', auth: false },
   '/vendor/xterm.mjs': { file: path.join(XTERM, 'xterm/lib/xterm.mjs'), type: 'text/javascript', auth: true },
   '/vendor/xterm.css': { file: path.join(XTERM, 'xterm/css/xterm.css'), type: 'text/css', auth: true },
@@ -158,7 +165,8 @@ const server = http.createServer((req, res) => {
 
 const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 for (const key of Object.keys(env)) if (key.startsWith('HARNESS_')) delete env[key];
-const session = new Session({ command: 'claude', args: CLAUDE_ARGS, cwd: WORKDIR, env });
+const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: WORKDIR, env });
+const transcript = new TranscriptFollower(WORKDIR);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
 function state() {
@@ -184,6 +192,9 @@ function attach(client) {
     client.send(JSON.stringify(state()));
     client.send(JSON.stringify({ type: 'reset' }));
     if (screen) client.send(JSON.stringify({ type: 'output', data: screen }));
+    client.send(JSON.stringify({ type: 'chat-reset' }));
+    if (transcript.entries.length) client.send(JSON.stringify({ type: 'chat', entries: transcript.entries }));
+    client.send(JSON.stringify({ type: 'chat-busy', busy: transcript.busy }));
     for (const text of client.queue) client.send(text);
     client.queue = [];
     client.live = true;
@@ -193,10 +204,16 @@ function attach(client) {
 session.on('start', () => {
   broadcast({ type: 'reset' });
   broadcast(state());
+  // A little slack, so a transcript created in the same second still counts.
+  transcript.start(session.startedAt - 2000);
 });
 session.on('output', (data) => broadcast({ type: 'output', data }));
+transcript.on('reset', () => broadcast({ type: 'chat-reset' }));
+transcript.on('entries', (entries) => broadcast({ type: 'chat', entries }));
+transcript.on('busy', (busy) => broadcast({ type: 'chat-busy', busy }));
 session.on('exit', ({ exitCode, signal }) => {
   console.log(`claude exited (code ${exitCode}, signal ${signal})`);
+  transcript.stop();
   broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested) });
   session.stopRequested = false;
   broadcast(state());

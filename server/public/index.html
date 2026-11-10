@@ -12,6 +12,10 @@
   <header class="bar">
     <span class="title">Claude Harness</span>
     <span id="status" class="status" data-state="connecting">Connecting</span>
+    <nav class="tabs" role="tablist">
+      <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
+      <button id="tab-chat" type="button" role="tab" data-view="chat" aria-selected="false">Chat</button>
+    </nav>
     <span class="spacer"></span>
     <button id="stop" type="button" class="secondary" hidden>Stop session</button>
     <form method="post" action="/logout">
@@ -20,7 +24,23 @@
   </header>
 
   <main class="stage">
-    <div id="terminal" class="terminal"></div>
+    <section id="view-terminal" class="view terminal-view" role="tabpanel" aria-labelledby="tab-terminal">
+      <div id="terminal" class="terminal"></div>
+    </section>
+
+    <section id="view-chat" class="view chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden>
+      <div id="chat-scroll" class="chat-scroll">
+        <div id="chat-list" class="chat-list">
+          <p id="chat-empty" class="chat-empty">Messages from this session appear here.</p>
+        </div>
+      </div>
+      <div id="chat-busy" class="chat-busy" hidden>
+        <span class="dots" aria-hidden="true"></span>
+        <span>Claude is working. Prompts and dialogs appear in the Terminal tab.</span>
+        <button id="interrupt" type="button" class="secondary">Interrupt</button>
+      </div>
+    </section>
+
     <div id="idle" class="idle" hidden>
       <p id="idle-text">No session is running.</p>
       <button id="start" type="button">Start session</button>

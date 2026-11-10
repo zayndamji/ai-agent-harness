@@ -1,7 +1,9 @@
-// Browser side: draws the session's terminal with xterm.js and sends
-// keystrokes, messages and size changes back over the WebSocket.
+// Browser side: draws the session's terminal with xterm.js, shows its
+// transcript in the Chat tab, and sends keystrokes, messages and size
+// changes back over the WebSocket.
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
+import { ChatView } from '/chat.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -11,6 +13,7 @@ const startBtn = $('start');
 const stopBtn = $('stop');
 const message = $('message');
 const sendBtn = $('send');
+const terminalEl = $('terminal');
 
 const term = new Terminal({
   fontFamily: 'Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace',
@@ -21,16 +24,61 @@ const term = new Terminal({
 });
 const fit = new FitAddon();
 term.loadAddon(fit);
-term.open($('terminal'));
-fit.fit();
+term.open(terminalEl);
+
+const chat = new ChatView({ list: $('chat-list'), scroll: $('chat-scroll'), empty: $('chat-empty'), busy: $('chat-busy') });
 
 let ws = null;
 let running = false;
 let retryDelay = 500;
+let view = 'terminal';
 
 function sendJson(msg) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+
+// Fit only while the terminal is visible: a hidden terminal measures as
+// zero and would shrink the session.
+function fitTerminal() {
+  if (terminalEl.offsetWidth > 0) fit.fit();
+}
+
+// ---- Tabs
+
+function showView(next) {
+  view = next;
+  for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
+    tab.setAttribute('aria-selected', String(tab.dataset.view === next));
+  }
+  $('view-terminal').hidden = next !== 'terminal';
+  $('view-chat').hidden = next !== 'chat';
+  try {
+    localStorage.setItem('harness-view', next);
+  } catch {
+    // Storage can be blocked; the tab just isn't remembered.
+  }
+  if (next === 'terminal') {
+    fitTerminal();
+    if (running) term.focus();
+  } else {
+    chat.toBottom();
+    if (running) message.focus();
+  }
+}
+
+for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
+  tab.addEventListener('click', () => showView(tab.dataset.view));
+}
+
+let savedView = 'terminal';
+try {
+  savedView = localStorage.getItem('harness-view') === 'chat' ? 'chat' : 'terminal';
+} catch {
+  // Use the default.
+}
+showView(savedView);
+
+// ---- Session state
 
 function setStatus(state, text) {
   statusEl.dataset.state = state;
@@ -45,7 +93,7 @@ function showState(isRunning, exitText) {
   message.disabled = !isRunning;
   sendBtn.disabled = !isRunning;
   if (exitText) idleText.textContent = exitText;
-  if (isRunning) term.focus();
+  if (isRunning && view === 'terminal') term.focus();
 }
 
 function connect() {
@@ -73,6 +121,15 @@ function connect() {
       case 'error':
         idleText.textContent = msg.message;
         break;
+      case 'chat-reset':
+        chat.reset();
+        break;
+      case 'chat':
+        chat.add(msg.entries);
+        break;
+      case 'chat-busy':
+        chat.setBusy(msg.busy);
+        break;
     }
   };
   ws.onclose = async (event) => {
@@ -91,11 +148,18 @@ term.onData((data) => sendJson({ type: 'input', data }));
 term.onResize(({ cols, rows }) => {
   if (running) sendJson({ type: 'resize', cols, rows });
 });
-new ResizeObserver(() => fit.fit()).observe($('terminal'));
+new ResizeObserver(fitTerminal).observe(terminalEl);
 
 startBtn.addEventListener('click', () => {
   idleText.textContent = 'Starting...';
-  fit.fit();
+  if (view !== 'terminal') {
+    // Size the terminal before starting, so Claude Code draws at the right width.
+    $('view-terminal').hidden = false;
+    fitTerminal();
+    $('view-terminal').hidden = true;
+  } else {
+    fitTerminal();
+  }
   sendJson({ type: 'start', cols: term.cols, rows: term.rows });
 });
 
@@ -103,8 +167,12 @@ stopBtn.addEventListener('click', () => {
   if (confirm('Stop the session? Claude Code will exit.')) sendJson({ type: 'stop' });
 });
 
-// The message box pastes the text into the terminal (as a bracketed paste
-// when Claude Code has turned that on), then presses Enter.
+// Escape is how Claude Code's terminal interrupts a turn.
+$('interrupt').addEventListener('click', () => sendJson({ type: 'input', data: '\x1b' }));
+
+// ---- Message box, shared by both tabs. It pastes the text into the terminal
+// (as a bracketed paste when Claude Code has turned that on), then presses Enter.
+
 function sendMessage() {
   const text = message.value;
   if (!text.trim() || !running) return;
@@ -112,6 +180,7 @@ function sendMessage() {
   setTimeout(() => sendJson({ type: 'input', data: '\r' }), 50);
   message.value = '';
   message.style.height = '';
+  chat.toBottom();
 }
 
 $('composer').addEventListener('submit', (event) => {
