@@ -22,14 +22,31 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 | Path | What it holds |
 | --- | --- |
+| `Dockerfile` | The image: Claude Code CLI, dev tools, non-root user |
+| `compose.yaml` | The container, its volumes and security options |
 | `context/` | Agent memory: design notes, findings and guidelines |
 | `CLAUDE.md`, `AGENTS.md` | Instructions for Claude Code and Codex sessions |
+
+## Run Claude Code in the container
+
+Needs Docker (Docker Desktop on a Mac).
+
+```bash
+docker compose build                       # build the image
+docker compose run --rm claude             # start Claude Code in /workspace
+docker compose run --rm claude bash        # open a shell in the container
+docker compose build --pull --no-cache     # update Claude Code to the latest release
+```
+
+On the first start, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
+
+To start in auto mode, run `docker compose run --rm claude claude --permission-mode auto`.
 
 ## Goals and progress
 
 | Goal | Status | Next step |
 | --- | --- | --- |
-| Sandboxed Claude Code container | ⬜ | Write the Dockerfile and compose file |
+| Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
 | Single session web UI | ⬜ | Spawn `claude` in a PTY and stream it to xterm.js |
 | Several sessions with message passing | ⬜ | Waits on the single session web UI |
 | Always-on Raspberry Pi | ⬜ | Waits on the container |
@@ -37,8 +54,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 ### Sandboxed Claude Code container
 
 - Done when: `claude` runs in the container on the Mac, logged in, with its files only in volumes.
-- ⬜ Dockerfile with the CLI, a non-root user and volumes for `~/.claude` and the workspace
-- ⬜ Login that survives container restarts
+- ✅ `Dockerfile` and `compose.yaml` with the CLI, a non-root user and volumes for the home folder and the workspace
+- 🟡 Login that survives container restarts
 
 ### Single session web UI
 

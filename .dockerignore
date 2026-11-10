@@ -1,0 +1,9 @@
+.git
+.claude
+context
+data
+workspaces
+node_modules
+.env
+.env.*
+*.md

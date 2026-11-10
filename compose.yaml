@@ -1,0 +1,20 @@
+name: claude-harness
+
+services:
+  claude:
+    build: .
+    image: claude-harness:latest
+    hostname: claude-box
+    stdin_open: true
+    tty: true
+    volumes:
+      # Login, settings and session history (~/.claude and ~/.claude.json).
+      - home:/home/node
+      # Projects Claude works on. No host folders are mounted.
+      - workspace:/workspace
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  home:
+  workspace:
