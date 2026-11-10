@@ -158,6 +158,8 @@ export class ChatView {
     // Names of the sessions that messaged this one, by the pid of their
     // socket: a reply is often addressed to the socket, not the name.
     this.peerNames = new Map();
+    // Names drawn as plain text because their session wasn't known yet.
+    this.unlinked = [];
     this.background = background;
     this.jobs = new Map();
     this.agentCards = new Map();
@@ -181,6 +183,7 @@ export class ChatView {
     this.empty.hidden = false;
     this.tools.clear();
     this.peerNames.clear();
+    this.unlinked = [];
     this.pending = [];
     this.tasks.hidden = true;
     this.tasks.replaceChildren();
@@ -272,16 +275,33 @@ export class ChatView {
   }
 
   // The other session of a message: a link that opens it when it runs here,
-  // else its name.
+  // else its name, which becomes a link once that session is known.
   peerLink({ pid, name, at }) {
     const peer = this.peers?.find({ pid, name, at });
-    const label = peer?.name || name || peer?.title || 'another session';
-    if (!peer?.sid) return el('span', 'peer-name', label);
-    const link = el('button', 'peer-link', label);
+    if (peer?.sid) return this.linkTo(peer, name);
+    const node = el('span', 'peer-name', name || peer?.name || 'another session');
+    this.unlinked.push({ node, pid, name, at });
+    return node;
+  }
+
+  linkTo(peer, name) {
+    const link = el('button', 'peer-link', peer.name || name || peer.title || 'another session');
     link.type = 'button';
     link.title = peer.title ? `Open “${peer.title}”` : 'Open that session';
     link.addEventListener('click', () => this.peers.open(peer.sid));
     return link;
+  }
+
+  // The session list changed: names that now match a running session become links.
+  refreshPeers() {
+    const waiting = this.unlinked;
+    this.unlinked = [];
+    for (const item of waiting) {
+      if (!item.node.isConnected) continue;
+      const peer = this.peers?.find(item);
+      if (peer?.sid) item.node.replaceWith(this.linkTo(peer, item.name));
+      else this.unlinked.push(item);
+    }
   }
 
   // A message another Claude session sent this one (its SendMessage).

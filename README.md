@@ -72,7 +72,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
 | Single session web UI | ✅ | |
-| Several sessions with message passing | 🟡 | Check message links and names with live sessions |
+| Several sessions with message passing | ✅ | |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
 ### Sandboxed Claude Code container
@@ -95,11 +95,11 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 
 ### Several sessions with message passing
 
-- Done when: 2 or 3 sessions run at once and can send each other messages through the server.
+- Done when: 2 or 3 sessions run at once and message each other through Claude Code's SendMessage, shown in the web UI.
 - ✅ Each session in its own slot on the server, with WebSocket messages per slot (`server/slots.js`)
 - ✅ Several sessions at once with a session list in the UI (`server/public/sidebar.js`)
 - ✅ Sessions sharing a folder keep their own chat through `/clear` and `/resume`, and every session notifies (`server/server.js`)
-- 🟡 Sessions message each other with Claude Code's SendMessage, shown in the Chat tab (`server/transcript.js`, `server/public/chat.js`)
+- ✅ Sessions message each other with Claude Code's SendMessage, shown in the Chat tab (`server/transcript.js`, `server/public/chat.js`)
 
 ### Always-on Raspberry Pi
 

@@ -143,6 +143,7 @@ function onSlots(list) {
   slots = list;
   notifyOthers(list);
   sidebar.render(slots, sid);
+  chat.refreshPeers();
   // The Files and Sessions tabs mark running sessions, so redraw the open one.
   if (runningKey() !== before) {
     if (view === 'files') filesView.load();
