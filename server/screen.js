@@ -73,6 +73,30 @@ function readStatus(term) {
   return status;
 }
 
+// What Claude Code's input box holds: the ❯ line under a rule, the lines
+// under it down to the next rule (newlines and wrapped lines, indented), or
+// null when no box is on screen (a dialog or menu took its place). Faint
+// placeholder or suggestion text counts as empty. A dialog's "❯ 1. Yes" line
+// can look like the box, so a box line shaped like a choice doesn't count.
+function readInputBox(term) {
+  const lines = rows(term);
+  for (let i = lines.length - 1; i > 0; i--) {
+    const input = INPUT.exec(lines[i].text);
+    if (!input || !RULE.test(lines[i - 1].text)) continue;
+    if (OPTION.test(lines[i].text)) return null;
+    const parts = [input[1]];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (RULE.test(lines[j].text)) {
+        const faint = input[1] && isFaint(lines[i].line, lines[i].text.indexOf('❯') + 1);
+        return { text: faint ? '' : parts.join('\n').trim(), rows: j - i };
+      }
+      parts.push(lines[j].text.trim());
+    }
+    return null;
+  }
+  return null;
+}
+
 // "❯ 1. main.py", "  2. utils.py": numbered choices, the ❯ marking the
 // highlighted one. A line indented under a choice is its description.
 const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s+(.*\S)\s*$/;
@@ -156,4 +180,4 @@ function readDialog(lines) {
   };
 }
 
-module.exports = { readStatus };
+module.exports = { readStatus, readInputBox };

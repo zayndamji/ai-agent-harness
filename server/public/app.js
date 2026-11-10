@@ -341,6 +341,7 @@ $('dialog-open').addEventListener('click', () => showView('terminal'));
 // ---- Session state
 
 function showState(isRunning, exitText) {
+  const started = isRunning && !running;
   running = isRunning;
   idle.hidden = isRunning;
   stopBtn.hidden = !isRunning;
@@ -351,7 +352,9 @@ function showState(isRunning, exitText) {
     idleTitle.textContent = exitText;
     idleText.textContent = 'Start a new session, pick a folder, or resume an earlier conversation. Files in the workspace are kept.';
   }
-  if (isRunning && view === 'terminal') term.focus();
+  // Only when a session starts: a state update mid-session (a new title, a
+  // switched transcript) must not pull focus out of the message box.
+  if (started && view === 'terminal') term.focus();
   renderTui();
 }
 
@@ -408,6 +411,15 @@ function connect() {
         break;
       case 'tui':
         onTui(msg.status);
+        break;
+      case 'send-failed':
+        // Nothing reached Claude: give the text back and say why.
+        chat.settlePending(msg.text);
+        if (!message.value) {
+          message.value = msg.text;
+          message.dispatchEvent(new Event('input'));
+        }
+        notice('Message not sent', msg.message);
         break;
       case 'answer-failed':
         dialogKey = null;
@@ -479,14 +491,20 @@ stopBtn.addEventListener('click', async () => {
 // Escape is how Claude Code's terminal interrupts a turn.
 $('interrupt').addEventListener('click', () => sendJson({ type: 'input', data: '\x1b' }));
 
-// ---- Message box, shared by both tabs. It pastes the text into the terminal
-// (as a bracketed paste when Claude Code has turned that on), then presses Enter.
+// ---- Message box, shared by both tabs. Every change goes to the server,
+// which types it into Claude Code's input box key by key (server/typist.js);
+// Send then presses Enter there, or pastes the message when it couldn't be typed.
+
+function compose(event) {
+  if (!running || event?.isComposing) return;
+  const paste = ['insertFromPaste', 'insertFromDrop', 'insertFromPasteAsQuotation'].includes(event?.inputType);
+  sendJson({ type: 'compose', text: message.value, caret: message.selectionEnd, paste });
+}
 
 function sendMessage() {
   const text = message.value;
   if (!text.trim() || !running) return;
-  term.paste(text);
-  setTimeout(() => sendJson({ type: 'input', data: '\r' }), 50);
+  sendJson({ type: 'submit', text });
   if (!text.trim().startsWith('/')) chat.addPending(text, busy);
   message.value = '';
   message.style.height = '';
@@ -503,12 +521,16 @@ message.addEventListener('keydown', (event) => {
     sendMessage();
   }
 });
-message.addEventListener('input', () => {
+message.addEventListener('input', (event) => {
+  compose(event);
   message.style.height = '';
   message.style.height = `${message.scrollHeight}px`;
   // A scroll bar only once the box reaches its tallest.
   message.style.overflowY = message.scrollHeight > 200 ? 'auto' : 'hidden';
   $('suggestion').hidden = Boolean(message.value) || $('suggestion').hidden;
 });
+
+// Text from an input method (accents, Chinese, Japanese) counts once it's committed.
+message.addEventListener('compositionend', () => compose());
 
 connect();

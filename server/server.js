@@ -13,6 +13,7 @@ const { TranscriptFollower, listSessions } = require('./transcript');
 const { readStatus } = require('./screen');
 const { FilesApi } = require('./files');
 const { UsageReports } = require('./usage');
+const { Typist } = require('./typist');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -265,6 +266,8 @@ const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: W
 const transcript = new TranscriptFollower(WORKDIR);
 const files = new FilesApi(WORKDIR);
 const usage = new UsageReports({ root: WORKDIR, env: process.env });
+// Types the Chat tab's message box into Claude Code as the user types (typist.js).
+const typist = new Typist(session);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
 // The live status read from the terminal screen (screen.js), sent only
@@ -331,6 +334,7 @@ function attach(client) {
 }
 
 session.on('start', () => {
+  typist.reset();
   broadcast({ type: 'reset' });
   broadcast(state());
 });
@@ -351,6 +355,7 @@ let pendingStart = null;
 session.on('exit', ({ exitCode, signal }) => {
   console.log(`claude exited (code ${exitCode}, signal ${signal})`);
   transcript.stop();
+  typist.reset();
   tuiStatus = null;
   broadcast({ type: 'tui', status: null });
   broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested), replaced: Boolean(pendingStart) });
@@ -401,6 +406,7 @@ function answerDialog(client, msg) {
       setTimeout(sendNext, 60);
     };
     sendNext();
+    typist.noteRawInput();
     console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);
   });
 }
@@ -459,7 +465,17 @@ function handleMessage(client, raw) {
       startSession(client, msg);
       return;
     case 'input':
-      if (typeof msg.data === 'string') session.write(msg.data);
+      if (typeof msg.data !== 'string') return;
+      session.write(msg.data);
+      typist.noteRawInput();
+      return;
+    case 'compose':
+      typist.compose(msg.text, msg.caret, msg.paste);
+      return;
+    case 'submit':
+      typist.submit(msg.text, (message) => {
+        if (client.readyState === client.OPEN) client.send(JSON.stringify({ type: 'send-failed', message, text: msg.text }));
+      });
       return;
     case 'answer':
       answerDialog(client, msg);

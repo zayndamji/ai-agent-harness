@@ -6,6 +6,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 - Starts a Claude Code session from a Start session button in the browser.
 - Sends your keystrokes and messages to the session and streams its output back.
+- Types what you write in the message box into Claude Code as you type it, key by key, like a person at the terminal, and pastes it on Send when it can't be typed exactly.
 - Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results one by one.
 - In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
 - Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
@@ -24,7 +25,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 - A Docker image holds the `claude` CLI and the server (`server/`).
 - The server runs `claude` in a pseudo-terminal and streams its output to the browser over a WebSocket.
-- The browser draws the terminal with xterm.js. Keys typed in the terminal and text from the message box go back to `claude`.
+- The browser draws the terminal with xterm.js. Keys typed in the terminal go back to `claude`.
+- Each change in the message box goes to the server, which presses the same keys in Claude Code's input box (characters, Backspace, arrow keys) and checks the box on screen afterwards. Send presses Enter.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
 - The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
 - The live status line, suggestions and dialogs are read from the server's copy of the screen.
@@ -35,7 +37,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 
 ## Run the web UI
