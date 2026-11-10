@@ -129,6 +129,7 @@ const runningKey = () => JSON.stringify(slots.filter((s) => s.running).map((s) =
 function onSlots(list) {
   const before = runningKey();
   slots = list;
+  notifyOthers(list);
   sidebar.render(slots, sid);
   // The Files and Sessions tabs mark running sessions, so redraw the open one.
   if (runningKey() !== before) {
@@ -279,17 +280,37 @@ notifyBtn.addEventListener('click', async () => {
   notifyBtn.setAttribute('aria-pressed', String(notifyOn));
 });
 
-function notify(title, body) {
+// `target` is the session it's about when that isn't the one on the page;
+// clicking the notification opens it.
+function notify(title, body, target = null) {
   if (!document.hidden) return;
   unseen += 1;
   refreshStatus();
   if (notifyOn) {
-    const n = new Notification(title, { body: (body || '').replace(/[#*`_>]/g, '').slice(0, 140), icon: '/favicon.svg', tag: 'harness' });
+    const n = new Notification(title, { body: (body || '').replace(/[#*`_>]/g, '').slice(0, 140), icon: '/favicon.svg', tag: `harness-${target || sid || 'page'}` });
     n.onclick = () => {
       window.focus();
+      if (target && target !== sid) openSlot(target);
       showView('chat');
       n.close();
     };
+  }
+}
+
+// The page's own session notifies from its chat and screen. The others only
+// reach the page as their line in the slot list, so a change of state there
+// notifies: working to ready (a turn ended) or anything to waiting.
+let slotStates = null;
+function notifyOthers(list) {
+  const before = slotStates;
+  slotStates = new Map(list.map((s) => [s.sid, s.state]));
+  if (!before) return;
+  for (const slot of list) {
+    if (slot.sid === sid) continue;
+    const was = before.get(slot.sid);
+    const name = slot.title || `Session in ${folderLabel(slot.folder)}`;
+    if (slot.state === 'waiting' && was !== 'waiting') notify('Claude needs your answer', name, slot.sid);
+    else if (slot.state === 'ready' && was === 'working') notify('Claude finished', name, slot.sid);
   }
 }
 document.addEventListener('visibilitychange', () => {

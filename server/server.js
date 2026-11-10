@@ -342,17 +342,30 @@ function attach(client, sid) {
 }
 
 // Every session id a slot has started with or followed since the server
-// started. A slot's transcript follower switches to a newer file in its
-// folder after /clear or /resume, but never to one of these unless it is its
-// own: two sessions in one folder would otherwise take each other's chat,
-// also after one of them ends.
+// started.
 const knownIds = new Set();
-function claimedElsewhere(id, self) {
-  return knownIds.has(id) && id !== self.transcript.sessionId && id !== self.transcript.currentSessionId;
+
+// A slot's transcript follower switches to a newer file in its folder after
+// /clear or /resume. With several sessions in one folder, this decides whose
+// file it is, so no session takes another's chat:
+// - a transcript a running slot follows is that slot's;
+// - one an earlier or ended slot had is only taken when it is written after
+//   /resume (or /clear) here;
+// - a new one goes to the session in that folder that sent /clear or
+//   /resume most recently, or else to the one that got input most recently.
+function mayFollow(id, mtimeMs, self) {
+  const t = self.transcript;
+  if (id === t.sessionId || id === t.currentSessionId) return true;
+  const others = [...slots.values()].filter((s) => s !== self && s.running);
+  if (others.some((s) => s.claims(id))) return false;
+  if (knownIds.has(id)) return self.switching && mtimeMs >= self.switchAt;
+  const rank = (s) => [s.switching ? s.switchAt : 0, s.lastInputAt];
+  const ahead = (a, b) => a[0] - b[0] || a[1] - b[1];
+  return others.filter((s) => s.transcript.dir === t.dir).every((s) => ahead(rank(self), rank(s)) > 0);
 }
 
 function createSlot() {
-  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, claimedElsewhere });
+  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, mayFollow });
   slot.on('message', (message) => sendToSlot(slot.sid, message));
   slot.on('changed', () => {
     if (slot.sessionId) knownIds.add(slot.sessionId);
@@ -434,10 +447,10 @@ function handleMessage(client, raw) {
       if (typeof msg.data === 'string') slot.input(msg.data);
       return;
     case 'compose':
-      slot.typist.compose(msg.text, msg.caret, msg.paste);
+      slot.compose(msg.text, msg.caret, msg.paste);
       return;
     case 'submit':
-      slot.typist.submit(msg.text, (message) => reply({ type: 'send-failed', message, text: msg.text }));
+      slot.submit(msg.text, (message) => reply({ type: 'send-failed', message, text: msg.text }));
       return;
     case 'answer':
       slot.answer(msg, (message) => reply({ type: 'answer-failed', message }));

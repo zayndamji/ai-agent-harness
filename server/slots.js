@@ -9,12 +9,25 @@ const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { Session } = require('./session');
 const { TranscriptFollower, listSessions } = require('./transcript');
-const { readStatus } = require('./screen');
+const { readStatus, readInputBox } = require('./screen');
 const { Typist } = require('./typist');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class StartError extends Error {}
+
+// Slash commands that make Claude Code write to another transcript: /clear
+// (also /reset, /new) starts a new one, /resume (also /continue) opens an
+// earlier one. A command typed in part ("/cle") counts too, because Enter runs
+// the highlighted autocomplete choice.
+const SWITCH_COMMANDS = ['clear', 'reset', 'new', 'resume', 'continue'];
+function isSwitchCommand(text) {
+  const word = /^\/([a-z-]+)(?:\s|$)/.exec((text || '').trim())?.[1];
+  return Boolean(word) && SWITCH_COMMANDS.some((name) => name === word || (word.length >= 3 && name.startsWith(word)));
+}
+// How long after such a command its session may take over a transcript: the
+// /resume picker can stay open a while.
+const SWITCH_WINDOW_MS = 10 * 60 * 1000;
 
 // start {folder?, resume?}: folder is relative to the workspace; resume is
 // 'latest', a session id from that folder, or absent for a new session.
@@ -39,20 +52,25 @@ function resolveStart(files, { folder: wanted, resume }) {
 // server adds the slot's id and sends them. 'changed' means the summary in
 // the slot list may have changed.
 class Slot extends EventEmitter {
-  // `claimedElsewhere(id, slot)` says whether another slot has the
-  // transcript with that session id, so this one never switches to it.
-  constructor({ command, args, env, workdir, claimedElsewhere }) {
+  // `mayFollow(id, mtimeMs, slot)` says whether this slot's transcript
+  // follower may switch to the transcript with that session id (server.js
+  // decides).
+  constructor({ command, args, env, workdir, mayFollow }) {
     super();
     this.sid = crypto.randomBytes(6).toString('hex');
     this.args = args;
     this.folder = '';
     this.session = new Session({ command, args, cwd: workdir, env });
-    this.transcript = new TranscriptFollower(workdir, { claimedElsewhere: (id) => claimedElsewhere(id, this) });
+    this.transcript = new TranscriptFollower(workdir, { mayFollow: (id, mtimeMs) => mayFollow(id, mtimeMs, this) });
     this.typist = new Typist(this.session);
     this.tuiStatus = null;
     this.tuiTimer = null;
     this.answering = false;
     this.stopRequested = false;
+    // When this session last got keys or a message, and when it last got a
+    // command that switches transcripts (null once the switch happened).
+    this.lastInputAt = 0;
+    this.switchAt = null;
 
     this.session.on('start', () => {
       this.typist.reset();
@@ -89,6 +107,7 @@ class Slot extends EventEmitter {
     });
     // After /clear or /resume inside the session, the session id changes.
     t.on('file', () => {
+      this.switchAt = null;
       this.send(this.state());
       this.emit('changed');
     });
@@ -187,9 +206,33 @@ class Slot extends EventEmitter {
     this.removeAllListeners('message');
   }
 
+  // Whether a switch command was sent recently and its switch hasn't happened.
+  get switching() {
+    return this.switchAt !== null && Date.now() - this.switchAt < SWITCH_WINDOW_MS;
+  }
+
+  noteInput(text) {
+    this.lastInputAt = Date.now();
+    if (text !== undefined && isSwitchCommand(text)) this.switchAt = this.lastInputAt;
+  }
+
+  // Keys from the Terminal tab. Enter runs what Claude Code's input box
+  // holds, so the box is read first, the way a person glances at it.
   input(data) {
+    const box = data.includes('\r') && this.session.mirror ? readInputBox(this.session.mirror) : null;
+    this.noteInput(box?.text);
     this.session.write(data);
     this.typist.noteRawInput();
+  }
+
+  compose(text, caret, paste) {
+    this.noteInput();
+    this.typist.compose(text, caret, paste);
+  }
+
+  submit(text, fail) {
+    this.noteInput(text);
+    this.typist.submit(text, fail);
   }
 
   resize(cols, rows) {
@@ -239,6 +282,7 @@ class Slot extends EventEmitter {
       if (option.n === dialog.freeText) keys.push(text);
       keys.push('\r');
       this.answering = true;
+      this.noteInput();
       const sendNext = () => {
         if (!keys.length || !this.running) {
           this.answering = false;

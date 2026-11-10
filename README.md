@@ -11,7 +11,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
 - Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
-- Notifies you when Claude finishes or needs an answer while the tab is in the background.
+- Notifies you when Claude finishes or needs an answer in any session while the tab is in the background.
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
 - Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders. Several sessions can share a folder.
 - Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
@@ -97,6 +97,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - Done when: 2 or 3 sessions run at once and can send each other messages through the server.
 - ✅ Each session in its own slot on the server, with WebSocket messages per slot (`server/slots.js`)
 - ✅ Several sessions at once with a session list in the UI (`server/public/sidebar.js`)
+- ✅ Sessions sharing a folder keep their own chat through `/clear` and `/resume`, and every session notifies (`server/server.js`)
 - ⬜ Message routing between sessions
 
 ### Always-on Raspberry Pi
