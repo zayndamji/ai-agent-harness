@@ -73,6 +73,13 @@ class Session extends EventEmitter {
     if (!this.mirror) return callback('');
     this.mirror.write('', () => callback(this.serializer.serialize()));
   }
+
+  // Calls back with the mirror once it has parsed all output so far.
+  withScreen(callback) {
+    if (!this.mirror) return;
+    const mirror = this.mirror;
+    mirror.write('', () => callback(mirror));
+  }
 }
 
 module.exports = { Session };

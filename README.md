@@ -7,6 +7,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Starts a Claude Code session from a Start session button in the browser.
 - Sends your keystrokes and messages to the session and streams its output back.
 - Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results one by one.
+- In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
+- Notifies you when Claude finishes or needs an answer while the tab is in the background.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
 - Keeps the session running when the browser closes, and shows the current screen when you come back.
 - Keeps the session's files in container volumes, never in the host's home directory.
@@ -19,7 +21,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - The browser draws the terminal with xterm.js. Keys typed in the terminal and text from the message box go back to `claude`.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
 - The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
-- Design details and findings: `context/cli-wrapping.md`, `context/web-ui.md` and `context/chat-view.md`.
+- The live status line, suggestions and dialogs are read from the server's copy of the screen.
+- Design details and findings: `context/cli-wrapping.md`, `context/web-ui.md`, `context/chat-view.md` and `context/live-status.md`.
 
 ## Repository layout
 
@@ -27,7 +30,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `public/` (browser page) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `public/` (browser page) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 | `context/` | Agent memory: design notes, findings and guidelines |
 | `CLAUDE.md`, `AGENTS.md` | Instructions for Claude Code and Codex sessions |

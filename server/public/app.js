@@ -3,39 +3,71 @@
 // changes back over the WebSocket.
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
-import { ChatView } from '/chat.js';
+import { ChatView, tokens } from '/chat.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
+const statusText = $('status-text');
 const idle = $('idle');
+const idleTitle = $('idle-title');
 const idleText = $('idle-text');
 const startBtn = $('start');
 const stopBtn = $('stop');
 const message = $('message');
 const sendBtn = $('send');
 const terminalEl = $('terminal');
+const BASE_TITLE = 'Claude Harness';
 
 const term = new Terminal({
-  fontFamily: 'Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace',
+  fontFamily: 'ui-monospace, Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace',
   fontSize: 13,
+  lineHeight: 1.15,
   cursorBlink: true,
   scrollback: 5000,
-  theme: { background: '#1b1b1a', foreground: '#ecebe7' },
+  theme: { background: '#1a1918', foreground: '#ecebe7', cursor: '#e0855c', selectionBackground: '#4a3a30' },
 });
 const fit = new FitAddon();
 term.loadAddon(fit);
 term.open(terminalEl);
 
-const chat = new ChatView({ list: $('chat-list'), scroll: $('chat-scroll'), empty: $('chat-empty'), busy: $('chat-busy') });
+const chat = new ChatView({
+  list: $('chat-list'),
+  scroll: $('chat-scroll'),
+  empty: $('chat-empty'),
+  jump: $('jump'),
+  tasks: $('tasks'),
+  onTerminal: () => showView('terminal'),
+  onTurnEnd: (text) => notify('Claude finished', text),
+});
 
 let ws = null;
 let running = false;
+let busy = false;
 let retryDelay = 500;
 let view = 'terminal';
+let tui = null;
+let unseen = 0;
 
 function sendJson(msg) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
+
+const store = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Storage can be blocked; the preference just isn't remembered.
+    }
+  },
+};
 
 // Fit only while the terminal is visible: a hidden terminal measures as
 // zero and would shrink the session.
@@ -52,11 +84,7 @@ function showView(next) {
   }
   $('view-terminal').hidden = next !== 'terminal';
   $('view-chat').hidden = next !== 'chat';
-  try {
-    localStorage.setItem('harness-view', next);
-  } catch {
-    // Storage can be blocked; the tab just isn't remembered.
-  }
+  store.set('harness-view', next);
   if (next === 'terminal') {
     fitTerminal();
     if (running) term.focus();
@@ -69,31 +97,138 @@ function showView(next) {
 for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 }
+showView(store.get('harness-view') === 'chat' ? 'chat' : 'terminal');
 
-let savedView = 'terminal';
-try {
-  savedView = localStorage.getItem('harness-view') === 'chat' ? 'chat' : 'terminal';
-} catch {
-  // Use the default.
+// ---- Status, title and notifications
+
+function refreshStatus() {
+  if (!ws) return;
+  if (!running) return setStatus('stopped', 'No session');
+  if (busy) return setStatus('working', 'Working');
+  setStatus('running', 'Ready');
 }
-showView(savedView);
-
-// ---- Session state
 
 function setStatus(state, text) {
   statusEl.dataset.state = state;
-  statusEl.textContent = text;
+  statusText.textContent = text;
+  const prefix = unseen ? `(${unseen}) ` : busy ? '● ' : '';
+  document.title = prefix + (sessionTitle || BASE_TITLE);
 }
+
+let sessionTitle = null;
+let notifyOn = store.get('harness-notify') === 'on' && 'Notification' in window && Notification.permission === 'granted';
+const notifyBtn = $('notify');
+notifyBtn.setAttribute('aria-pressed', String(notifyOn));
+if (!('Notification' in window) || !window.isSecureContext) {
+  notifyBtn.title = 'Notifications need https or localhost. The tab title still shows when Claude finishes.';
+}
+notifyBtn.addEventListener('click', async () => {
+  if (notifyOn) {
+    notifyOn = false;
+  } else if ('Notification' in window && window.isSecureContext) {
+    notifyOn = (await Notification.requestPermission()) === 'granted';
+  }
+  store.set('harness-notify', notifyOn ? 'on' : 'off');
+  notifyBtn.setAttribute('aria-pressed', String(notifyOn));
+});
+
+function notify(title, body) {
+  if (!document.hidden) return;
+  unseen += 1;
+  refreshStatus();
+  if (notifyOn) {
+    const n = new Notification(title, { body: (body || '').replace(/[#*`_>]/g, '').slice(0, 140), icon: '/favicon.svg', tag: 'harness' });
+    n.onclick = () => {
+      window.focus();
+      showView('chat');
+      n.close();
+    };
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && unseen) {
+    unseen = 0;
+    refreshStatus();
+  }
+});
+
+// ---- Session bar: title, model, mode, effort, context size
+
+function prettyModel(id) {
+  const m = /^claude-([a-z]+)-(\d+)-(\d+)/.exec(id || '');
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}` : id;
+}
+
+let meta = {};
+function renderSessionBar() {
+  sessionTitle = meta.title || null;
+  $('session-title').textContent = meta.title || (running ? 'New session' : 'No session');
+  const chips = [];
+  if (meta.model) chips.push([prettyModel(meta.model)]);
+  const mode = tui?.mode || (meta.permissionMode ? `${meta.permissionMode} mode` : null);
+  if (mode) chips.push([mode, /auto|bypass/.test(mode) ? 'accent' : '']);
+  if (tui?.effort) chips.push([`${tui.effort} effort`]);
+  if (meta.contextTokens) chips.push([`${tokens(meta.contextTokens)} context`]);
+  const box = $('session-chips');
+  box.replaceChildren(...chips.map(([text, cls]) => {
+    const item = document.createElement('span');
+    item.className = cls || '';
+    item.textContent = text;
+    return item;
+  }));
+  box.hidden = !chips.length;
+  refreshStatus();
+}
+
+// ---- Live status from the terminal: spinner, tip, suggestion, dialogs
+
+function renderTui() {
+  const working = busy || Boolean(tui?.spinner) || Boolean(tui?.working);
+  $('chat-busy').hidden = !working || !running;
+  $('busy-verb').textContent = tui?.spinner || 'Working…';
+  $('busy-detail').textContent = tui?.detail ? `· ${tui.detail}` : '';
+  $('busy-tip').hidden = !tui?.tip;
+  $('busy-tip').textContent = tui?.tip ? `Tip: ${tui.tip}` : '';
+  const waiting = running && Boolean(tui?.dialog);
+  $('dialog-banner').hidden = !waiting;
+  $('dialog-text').textContent = tui?.dialog || '';
+  const suggestion = running && !working && !message.value && tui?.suggestion;
+  $('suggestion').hidden = !suggestion;
+  $('suggestion-text').textContent = suggestion || '';
+  renderSessionBar();
+}
+
+let lastDialog = null;
+function onTui(status) {
+  tui = status;
+  if (tui?.dialog && tui.dialog !== lastDialog) notify('Claude needs your answer', tui.dialog);
+  lastDialog = tui?.dialog || null;
+  renderTui();
+}
+
+$('suggestion-text').addEventListener('click', () => {
+  message.value = tui?.suggestion || '';
+  message.dispatchEvent(new Event('input'));
+  message.focus();
+});
+$('dialog-open').addEventListener('click', () => showView('terminal'));
+
+// ---- Session state
 
 function showState(isRunning, exitText) {
   running = isRunning;
-  setStatus(isRunning ? 'running' : 'stopped', isRunning ? 'Session running' : 'No session');
   idle.hidden = isRunning;
   stopBtn.hidden = !isRunning;
   message.disabled = !isRunning;
   sendBtn.disabled = !isRunning;
-  if (exitText) idleText.textContent = exitText;
+  message.placeholder = isRunning ? 'Message Claude' : 'Start a session to send messages';
+  if (exitText) {
+    idleTitle.textContent = exitText;
+    idleText.textContent = 'Start a new session to keep working. Files in the workspace are kept.';
+    startBtn.textContent = 'Start new session';
+  }
   if (isRunning && view === 'terminal') term.focus();
+  renderTui();
 }
 
 function connect() {
@@ -116,7 +251,7 @@ function connect() {
         term.write(msg.data);
         break;
       case 'exit':
-        showState(false, msg.stopped ? 'Session stopped.' : `Claude Code exited (code ${msg.exitCode}).`);
+        showState(false, msg.stopped ? 'Session stopped' : `Claude Code exited (code ${msg.exitCode})`);
         break;
       case 'error':
         idleText.textContent = msg.message;
@@ -128,7 +263,15 @@ function connect() {
         chat.add(msg.entries);
         break;
       case 'chat-busy':
-        chat.setBusy(msg.busy);
+        busy = msg.busy;
+        renderTui();
+        break;
+      case 'meta':
+        meta = msg.meta || {};
+        renderSessionBar();
+        break;
+      case 'tui':
+        onTui(msg.status);
         break;
     }
   };
@@ -151,7 +294,7 @@ term.onResize(({ cols, rows }) => {
 new ResizeObserver(fitTerminal).observe(terminalEl);
 
 startBtn.addEventListener('click', () => {
-  idleText.textContent = 'Starting...';
+  idleTitle.textContent = 'Starting…';
   if (view !== 'terminal') {
     // Size the terminal before starting, so Claude Code draws at the right width.
     $('view-terminal').hidden = false;
@@ -178,9 +321,10 @@ function sendMessage() {
   if (!text.trim() || !running) return;
   term.paste(text);
   setTimeout(() => sendJson({ type: 'input', data: '\r' }), 50);
+  if (!text.trim().startsWith('/')) chat.addPending(text, busy);
   message.value = '';
   message.style.height = '';
-  chat.toBottom();
+  renderTui();
 }
 
 $('composer').addEventListener('submit', (event) => {
@@ -196,6 +340,7 @@ message.addEventListener('keydown', (event) => {
 message.addEventListener('input', () => {
   message.style.height = '';
   message.style.height = `${message.scrollHeight}px`;
+  $('suggestion').hidden = Boolean(message.value) || $('suggestion').hidden;
 });
 
 connect();

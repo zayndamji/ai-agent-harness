@@ -4,52 +4,108 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Claude Harness</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/vendor/xterm.css">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body class="app">
   <header class="bar">
-    <span class="title">Claude Harness</span>
-    <span id="status" class="status" data-state="connecting">Connecting</span>
-    <nav class="tabs" role="tablist">
-      <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
+    <div class="bar-left">
+      <div class="brand">
+        <img src="/favicon.svg" alt="" width="22" height="22">
+        <span class="brand-name">Claude Harness</span>
+      </div>
+      <span id="status" class="status" data-state="connecting"><span class="status-dot"></span><span id="status-text">Connecting</span></span>
+    </div>
+
+    <nav class="tabs" role="tablist" aria-label="Views">
       <button id="tab-chat" type="button" role="tab" data-view="chat" aria-selected="false">Chat</button>
+      <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
     </nav>
-    <span class="spacer"></span>
-    <button id="stop" type="button" class="secondary" hidden>Stop session</button>
-    <form method="post" action="/logout">
-      <button type="submit" class="secondary">Log out</button>
-    </form>
+
+    <div class="bar-actions">
+      <button id="stop" type="button" class="ghost" hidden title="Stop the session">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        <span>Stop</span>
+      </button>
+      <form method="post" action="/logout">
+        <button type="submit" class="ghost icon-only" title="Log out" aria-label="Log out">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4"/></svg>
+        </button>
+      </form>
+    </div>
   </header>
 
   <main class="stage">
+    <section id="view-chat" class="view chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden>
+      <div class="session-bar">
+        <div class="session-info">
+          <div class="session-title" id="session-title">New session</div>
+          <div class="session-meta" id="session-chips"></div>
+        </div>
+        <button id="notify" type="button" class="ghost icon-only small" title="Notify me when Claude finishes" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        </button>
+      </div>
+      <div id="tasks" class="tasks" hidden></div>
+
+      <div id="chat-scroll" class="chat-scroll">
+        <div id="chat-list" class="chat-list">
+          <div id="chat-empty" class="chat-empty">
+            <img src="/favicon.svg" alt="" width="40" height="40">
+            <p class="chat-empty-title">Nothing here yet</p>
+            <p>Messages, tool calls and results from this session appear here as Claude works.</p>
+          </div>
+        </div>
+      </div>
+      <button id="jump" type="button" class="jump" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+        Latest
+      </button>
+
+      <div id="dialog-banner" class="banner" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+        <div><strong>Claude is waiting for your answer.</strong> <span id="dialog-text"></span></div>
+        <button id="dialog-open" type="button" class="small">Open Terminal</button>
+      </div>
+
+      <div id="chat-busy" class="working" hidden>
+        <span class="spinner" aria-hidden="true"></span>
+        <div class="working-text">
+          <div><span id="busy-verb">Working…</span> <span id="busy-detail" class="muted"></span></div>
+          <div id="busy-tip" class="tip" hidden></div>
+        </div>
+        <button id="interrupt" type="button" class="ghost small" title="Interrupt (Esc)">Interrupt</button>
+      </div>
+    </section>
+
     <section id="view-terminal" class="view terminal-view" role="tabpanel" aria-labelledby="tab-terminal">
       <div id="terminal" class="terminal"></div>
     </section>
 
-    <section id="view-chat" class="view chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden>
-      <div id="chat-scroll" class="chat-scroll">
-        <div id="chat-list" class="chat-list">
-          <p id="chat-empty" class="chat-empty">Messages from this session appear here.</p>
-        </div>
-      </div>
-      <div id="chat-busy" class="chat-busy" hidden>
-        <span class="dots" aria-hidden="true"></span>
-        <span>Claude is working. Prompts and dialogs appear in the Terminal tab.</span>
-        <button id="interrupt" type="button" class="secondary">Interrupt</button>
-      </div>
-    </section>
-
     <div id="idle" class="idle" hidden>
-      <p id="idle-text">No session is running.</p>
-      <button id="start" type="button">Start session</button>
+      <div class="idle-card">
+        <img src="/favicon.svg" alt="" width="44" height="44">
+        <p class="idle-title" id="idle-title">No session running</p>
+        <p class="idle-text" id="idle-text">Start Claude Code in the container's workspace. It keeps running when you close this page.</p>
+        <button id="start" type="button">Start session</button>
+      </div>
     </div>
   </main>
 
-  <form id="composer" class="composer">
-    <textarea id="message" rows="1" placeholder="Message Claude. Enter sends, Shift+Enter adds a line." disabled></textarea>
-    <button id="send" type="submit" disabled>Send</button>
-  </form>
+  <footer class="composer-wrap">
+    <div id="suggestion" class="suggestion" hidden>
+      <span class="muted">Suggested</span>
+      <button id="suggestion-text" type="button" class="suggestion-chip"></button>
+    </div>
+    <form id="composer" class="composer">
+      <textarea id="message" rows="1" placeholder="Message Claude" disabled></textarea>
+      <button id="send" type="submit" class="send" disabled title="Send (Enter)" aria-label="Send">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+      </button>
+    </form>
+    <div class="composer-hint muted">Enter sends · Shift+Enter adds a line · Esc in the terminal interrupts</div>
+  </footer>
 </body>
 </html>

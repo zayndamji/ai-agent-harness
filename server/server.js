@@ -9,6 +9,7 @@ const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { Session } = require('./session');
 const { TranscriptFollower } = require('./transcript');
+const { readStatus } = require('./screen');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -34,6 +35,8 @@ const FILES = {
   '/': { file: path.join(PUBLIC, 'index.html'), type: 'text/html; charset=utf-8', auth: true },
   '/app.js': { file: path.join(PUBLIC, 'app.js'), type: 'text/javascript', auth: true },
   '/chat.js': { file: path.join(PUBLIC, 'chat.js'), type: 'text/javascript', auth: true },
+  '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
+  '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
   '/vendor/purify.mjs': { file: path.join(MODULES, 'dompurify/dist/purify.es.mjs'), type: 'text/javascript', auth: true },
   '/style.css': { file: path.join(PUBLIC, 'style.css'), type: 'text/css', auth: false },
@@ -169,6 +172,26 @@ const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: W
 const transcript = new TranscriptFollower(WORKDIR);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
+// The live status read from the terminal screen (screen.js), sent only
+// when it changes. Reading waits a little after output so bursts are read once.
+let tuiStatus = null;
+let tuiTimer = null;
+function scheduleStatus() {
+  if (tuiTimer) return;
+  tuiTimer = setTimeout(() => {
+    tuiTimer = null;
+    session.withScreen((mirror) => {
+      const next = session.running ? readStatus(mirror) : null;
+      if (JSON.stringify(next) === JSON.stringify(tuiStatus)) return;
+      tuiStatus = next;
+      broadcast({ type: 'tui', status: tuiStatus });
+    });
+  }, 250);
+}
+// The spinner's clock ticks every second without other output changing, and
+// output can stop while a dialog waits, so also read once a second.
+setInterval(() => session.running && scheduleStatus(), 1000).unref();
+
 function state() {
   return { type: 'state', running: session.running, startedAt: session.startedAt };
 }
@@ -195,6 +218,8 @@ function attach(client) {
     client.send(JSON.stringify({ type: 'chat-reset' }));
     if (transcript.entries.length) client.send(JSON.stringify({ type: 'chat', entries: transcript.entries }));
     client.send(JSON.stringify({ type: 'chat-busy', busy: transcript.busy }));
+    client.send(JSON.stringify({ type: 'meta', meta: transcript.meta }));
+    client.send(JSON.stringify({ type: 'tui', status: tuiStatus }));
     for (const text of client.queue) client.send(text);
     client.queue = [];
     client.live = true;
@@ -207,13 +232,19 @@ session.on('start', () => {
   // A little slack, so a transcript created in the same second still counts.
   transcript.start(session.startedAt - 2000);
 });
-session.on('output', (data) => broadcast({ type: 'output', data }));
+session.on('output', (data) => {
+  broadcast({ type: 'output', data });
+  scheduleStatus();
+});
 transcript.on('reset', () => broadcast({ type: 'chat-reset' }));
 transcript.on('entries', (entries) => broadcast({ type: 'chat', entries }));
 transcript.on('busy', (busy) => broadcast({ type: 'chat-busy', busy }));
+transcript.on('meta', (meta) => broadcast({ type: 'meta', meta }));
 session.on('exit', ({ exitCode, signal }) => {
   console.log(`claude exited (code ${exitCode}, signal ${signal})`);
   transcript.stop();
+  tuiStatus = null;
+  broadcast({ type: 'tui', status: null });
   broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested) });
   session.stopRequested = false;
   broadcast(state());
