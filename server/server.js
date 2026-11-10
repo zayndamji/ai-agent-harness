@@ -12,6 +12,7 @@ const { Session } = require('./session');
 const { TranscriptFollower, listSessions } = require('./transcript');
 const { readStatus } = require('./screen');
 const { FilesApi } = require('./files');
+const { UsageReports } = require('./usage');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -41,6 +42,7 @@ const FILES = {
   '/sessions.js': { file: path.join(PUBLIC, 'sessions.js'), type: 'text/javascript', auth: true },
   '/dialog.js': { file: path.join(PUBLIC, 'dialog.js'), type: 'text/javascript', auth: true },
   '/jobs.js': { file: path.join(PUBLIC, 'jobs.js'), type: 'text/javascript', auth: true },
+  '/usage-view.js': { file: path.join(PUBLIC, 'usage-view.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
@@ -229,6 +231,14 @@ const server = http.createServer((req, res) => {
     return files.handle(req, res, pathname, searchParams, send);
   }
   if (req.method === 'POST' && pathname === '/api/folders') return void handleMkdir(req, res);
+  if (req.method === 'GET' && pathname === '/api/usage') {
+    if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
+    usage
+      .get(searchParams.get('tz'), { refresh: searchParams.get('refresh') === '1' })
+      .then((data) => json(res, 200, data))
+      .catch((err) => json(res, 500, { error: `ccusage failed: ${err.message}` }));
+    return;
+  }
   if (req.method === 'GET' && pathname === '/api/task-output') {
     if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
     return taskOutput(res, searchParams.get('task'));
@@ -254,6 +264,7 @@ for (const key of Object.keys(env)) if (key.startsWith('HARNESS_')) delete env[k
 const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: WORKDIR, env });
 const transcript = new TranscriptFollower(WORKDIR);
 const files = new FilesApi(WORKDIR);
+const usage = new UsageReports({ root: WORKDIR, env: process.env });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
 // The live status read from the terminal screen (screen.js), sent only

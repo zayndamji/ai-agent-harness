@@ -8,6 +8,7 @@ import { FilesView } from '/files.js';
 import { SessionsView } from '/sessions.js';
 import { confirmAction, notice } from '/dialog.js';
 import { JobsPanel } from '/jobs.js';
+import { UsageView } from '/usage-view.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -54,6 +55,7 @@ let current = { running: false, folder: '', sessionId: null };
 const sessionInfo = () => current;
 const jobsPanel = new JobsPanel({ root: $('jobs-panel'), toggle: $('jobs-toggle'), count: $('jobs-count'), chat });
 const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
+const usageView = new UsageView($('view-usage'), { onStart: (opts) => startSession(opts), onOpenFolder: (folder) => openFolder(folder) });
 const sessionsView = new SessionsView($('view-sessions'), {
   onStart: (opts) => startSession(opts),
   onOpenFolder: (folder) => openFolder(folder),
@@ -106,9 +108,10 @@ function showView(next) {
   $('view-chat').hidden = next !== 'chat';
   $('view-files').hidden = next !== 'files';
   $('view-sessions').hidden = next !== 'sessions';
-  // The Files and Sessions tabs work without a session, so the idle card and
-  // the message box stay off them.
-  document.body.classList.toggle('files-open', next === 'files' || next === 'sessions');
+  $('view-usage').hidden = next !== 'usage';
+  // The Files, Sessions and Usage tabs work without a session, so the idle
+  // card and the message box stay off them.
+  document.body.classList.toggle('files-open', ['files', 'sessions', 'usage'].includes(next));
   document.body.dataset.view = next;
   store.set('harness-view', next);
   if (next === 'terminal' || next === 'chat') store.set('harness-session-view', next);
@@ -120,8 +123,10 @@ function showView(next) {
     if (running) message.focus();
   } else if (next === 'files') {
     filesView.load();
-  } else {
+  } else if (next === 'sessions') {
     sessionsView.load();
+  } else {
+    usageView.load();
   }
 }
 
@@ -135,7 +140,7 @@ for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 }
 const savedView = store.get('harness-view');
-showView(['chat', 'files', 'sessions'].includes(savedView) ? savedView : 'terminal');
+showView(['chat', 'files', 'sessions', 'usage'].includes(savedView) ? savedView : 'terminal');
 
 // ---- Status, title and notifications
 

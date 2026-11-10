@@ -14,6 +14,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
 - Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders.
 - Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
+- Has a Usage tab: tokens and estimated cost per day, the current 5-hour block, breakdowns by project, token type and model, and every session, day and block in detail, from [ccusage](https://github.com/ccusage/ccusage) running offline.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
 - Keeps the session running when the browser closes, and shows the current screen when you come back.
 - Keeps the session's files in container volumes, never in the host's home directory.
@@ -32,9 +33,9 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 | Path | What it holds |
 | --- | --- |
-| `Dockerfile` | The image: Claude Code CLI, dev tools, the server, non-root user |
+| `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files and Sessions tabs' API), `public/` (browser page; `jobs.js` is the Background panel) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `jobs.js` is the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 
 ## Run the web UI
@@ -87,6 +88,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ Chat tab with messages, tool calls and results (`server/transcript.js`, `server/public/chat.js`)
 - ✅ Start or resume a session in any workspace folder, and a Sessions tab across all folders (`server/public/files.js`, `server/public/sessions.js`)
 - ✅ Answer questions from the Chat tab, and a Background panel for agents and background commands (`server/screen.js`, `server/public/jobs.js`)
+- ✅ Usage tab from ccusage, offline (`server/usage.js`, `server/public/usage-view.js`)
 
 ### Several sessions with message passing
 

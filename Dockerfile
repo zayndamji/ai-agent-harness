@@ -15,6 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
     && npm cache clean --force
 
+# ccusage reads the local transcripts for the Usage tab, always with
+# --offline, so it never goes online. Pinned to a version whose package,
+# provenance and binary were checked: check a new version the same way before
+# changing it. It runs a prebuilt binary from @ccusage/ccusage-<platform>;
+# neither package has install scripts, and --ignore-scripts keeps it that way.
+ARG CCUSAGE_VERSION=20.0.48
+RUN npm install -g --ignore-scripts ccusage@${CCUSAGE_VERSION} \
+    && npm cache clean --force
+
 # The web UI server (server/). node-pty compiles here, for the image's architecture.
 WORKDIR /opt/harness
 COPY server/package.json server/package-lock.json ./
