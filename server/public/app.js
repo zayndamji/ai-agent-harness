@@ -4,6 +4,7 @@
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
 import { ChatView, tokens } from '/chat.js';
+import { FilesView } from '/files.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -37,8 +38,13 @@ const chat = new ChatView({
   jump: $('jump'),
   tasks: $('tasks'),
   onTerminal: () => showView('terminal'),
-  onTurnEnd: (text) => notify('Claude finished', text),
+  onTurnEnd: (text) => {
+    notify('Claude finished', text);
+    // Claude may have changed files during the turn.
+    if (view === 'files') filesView.load();
+  },
 });
+const filesView = new FilesView($('view-files'));
 
 let ws = null;
 let running = false;
@@ -84,20 +90,25 @@ function showView(next) {
   }
   $('view-terminal').hidden = next !== 'terminal';
   $('view-chat').hidden = next !== 'chat';
+  $('view-files').hidden = next !== 'files';
+  // The Files tab works without a session, so the idle card stays off it.
+  document.body.classList.toggle('files-open', next === 'files');
   store.set('harness-view', next);
   if (next === 'terminal') {
     fitTerminal();
     if (running) term.focus();
-  } else {
+  } else if (next === 'chat') {
     chat.toBottom();
     if (running) message.focus();
+  } else {
+    filesView.load();
   }
 }
 
 for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 }
-showView(store.get('harness-view') === 'chat' ? 'chat' : 'terminal');
+showView(['chat', 'files'].includes(store.get('harness-view')) ? store.get('harness-view') : 'terminal');
 
 // ---- Status, title and notifications
 

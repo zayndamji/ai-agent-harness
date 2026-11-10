@@ -22,6 +22,7 @@
     <nav class="tabs" role="tablist" aria-label="Views">
       <button id="tab-chat" type="button" role="tab" data-view="chat" aria-selected="false">Chat</button>
       <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
+      <button id="tab-files" type="button" role="tab" data-view="files" aria-selected="false">Files</button>
     </nav>
 
     <div class="bar-actions">
@@ -83,6 +84,8 @@
     <section id="view-terminal" class="view terminal-view" role="tabpanel" aria-labelledby="tab-terminal">
       <div id="terminal" class="terminal"></div>
     </section>
+
+    <section id="view-files" class="view files-view" role="tabpanel" aria-labelledby="tab-files" hidden></section>
 
     <div id="idle" class="idle" hidden>
       <div class="idle-card">

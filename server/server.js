@@ -10,6 +10,7 @@ const { WebSocketServer } = require('ws');
 const { Session } = require('./session');
 const { TranscriptFollower } = require('./transcript');
 const { readStatus } = require('./screen');
+const { FilesApi } = require('./files');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -35,6 +36,7 @@ const FILES = {
   '/': { file: path.join(PUBLIC, 'index.html'), type: 'text/html; charset=utf-8', auth: true },
   '/app.js': { file: path.join(PUBLIC, 'app.js'), type: 'text/javascript', auth: true },
   '/chat.js': { file: path.join(PUBLIC, 'chat.js'), type: 'text/javascript', auth: true },
+  '/files.js': { file: path.join(PUBLIC, 'files.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
@@ -148,8 +150,14 @@ function handleLogout(req, res) {
 
 // ---- HTTP
 
+const FILE_APIS = new Set(['/api/files', '/api/file', '/api/archive']);
+
 const server = http.createServer((req, res) => {
-  const { pathname } = new URL(req.url, 'http://localhost');
+  const { pathname, searchParams } = new URL(req.url, 'http://localhost');
+  if (req.method === 'GET' && FILE_APIS.has(pathname)) {
+    if (!tokenOf(req)) return send(res, 401, { 'Content-Type': 'application/json' }, '{"error":"not logged in"}');
+    return files.handle(req, res, pathname, searchParams, send);
+  }
   if (req.method === 'POST' && pathname === '/login') return void handleLogin(req, res);
   if (req.method === 'POST' && pathname === '/logout') return handleLogout(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, {}, 'Method not allowed');
@@ -170,6 +178,7 @@ const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 for (const key of Object.keys(env)) if (key.startsWith('HARNESS_')) delete env[key];
 const session = new Session({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, cwd: WORKDIR, env });
 const transcript = new TranscriptFollower(WORKDIR);
+const files = new FilesApi(WORKDIR);
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
 
 // The live status read from the terminal screen (screen.js), sent only
