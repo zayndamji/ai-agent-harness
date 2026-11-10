@@ -524,6 +524,31 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 
   gap: 10px;
 }
 .question.answered { border-color: var(--border); }
+
+/* Messages between Claude sessions (SendMessage): incoming ones with a
+   left rule, ones this session sent with a lighter one. */
+.peer-msg {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow-wrap: anywhere;
+}
+.peer-msg.out { border-left-color: var(--border-strong); background: transparent; }
+.peer-msg > :not(.peer-head) { font-size: 14px; line-height: 1.6; }
+.peer-msg p { margin: 0; }
+.peer-head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.peer-head .tool-state { margin-left: auto; }
+.peer-msg[data-state="done"] .tool-state { color: var(--ok); }
+.peer-msg[data-state="error"] { border-left-color: var(--danger); }
+.peer-msg[data-state="error"] .tool-state { color: var(--danger); }
+.peer-name { color: var(--text); }
+button.peer-link { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+button.peer-link:hover { background: transparent; color: var(--accent-hover); }
+.peer-error { font-size: 12.5px; color: var(--danger); }
 .question.answered .question-head { color: var(--muted); }
 .question-head { display: flex; align-items: center; gap: 8px; color: var(--accent); font-weight: 600; font-size: 13px; }
 .question-text { font-weight: 600; }

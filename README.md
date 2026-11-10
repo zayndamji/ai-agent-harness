@@ -12,6 +12,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
 - Notifies you when Claude finishes or needs an answer in any session while the tab is in the background.
+- Shows messages sessions send each other with Claude Code's own SendMessage, as cards in the Chat tab that link to the other session.
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
 - Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders. Several sessions can share a folder.
 - Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
@@ -71,7 +72,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
 | Single session web UI | ✅ | |
-| Several sessions with message passing | 🟡 | Message routing between sessions |
+| Several sessions with message passing | 🟡 | Check message links and names with live sessions |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
 ### Sandboxed Claude Code container
@@ -98,7 +99,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ Each session in its own slot on the server, with WebSocket messages per slot (`server/slots.js`)
 - ✅ Several sessions at once with a session list in the UI (`server/public/sidebar.js`)
 - ✅ Sessions sharing a folder keep their own chat through `/clear` and `/resume`, and every session notifies (`server/server.js`)
-- ⬜ Message routing between sessions
+- 🟡 Sessions message each other with Claude Code's SendMessage, shown in the Chat tab (`server/transcript.js`, `server/public/chat.js`)
 
 ### Always-on Raspberry Pi
 

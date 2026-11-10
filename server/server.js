@@ -344,6 +344,9 @@ function attach(client, sid) {
 // Every session id a slot has started with or followed since the server
 // started.
 const knownIds = new Set();
+// The name each `claude` process goes by for messages between sessions, by
+// process id, learned from the messages and ListAgents listings in transcripts.
+const peerNames = new Map();
 
 // A slot's transcript follower switches to a newer file in its folder after
 // /clear or /resume. With several sessions in one folder, this decides whose
@@ -365,12 +368,14 @@ function mayFollow(id, mtimeMs, self) {
 }
 
 function createSlot() {
-  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, mayFollow });
+  const slot = new Slot({ command: CLAUDE_COMMAND, args: CLAUDE_ARGS, env, workdir: WORKDIR, mayFollow, peerNames });
   slot.on('message', (message) => sendToSlot(slot.sid, message));
   slot.on('changed', () => {
     if (slot.sessionId) knownIds.add(slot.sessionId);
     if (slots.has(slot.sid)) broadcastSlots();
   });
+  // Another slot's name may be in this slot's list line.
+  slot.on('peer-name', broadcastSlots);
   return slot;
 }
 

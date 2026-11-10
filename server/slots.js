@@ -54,11 +54,13 @@ function resolveStart(files, { folder: wanted, resume }) {
 class Slot extends EventEmitter {
   // `mayFollow(id, mtimeMs, slot)` says whether this slot's transcript
   // follower may switch to the transcript with that session id (server.js
-  // decides).
-  constructor({ command, args, env, workdir, mayFollow }) {
+  // decides). `peerNames` maps a `claude` process id to the name other
+  // sessions message it by, shared by all slots.
+  constructor({ command, args, env, workdir, mayFollow, peerNames }) {
     super();
     this.sid = crypto.randomBytes(6).toString('hex');
     this.args = args;
+    this.peerNames = peerNames;
     this.folder = '';
     this.session = new Session({ command, args, cwd: workdir, env });
     this.transcript = new TranscriptFollower(workdir, { mayFollow: (id, mtimeMs) => mayFollow(id, mtimeMs, this) });
@@ -73,6 +75,7 @@ class Slot extends EventEmitter {
     this.switchAt = null;
 
     this.session.on('start', () => {
+      this.startedPid = this.pid;
       this.typist.reset();
       this.send({ type: 'reset' });
       this.send(this.state());
@@ -84,6 +87,8 @@ class Slot extends EventEmitter {
     });
     this.session.on('exit', ({ exitCode, signal }) => {
       console.log(`claude exited in slot ${this.sid} (code ${exitCode}, signal ${signal})`);
+      // Another process may get the same pid later.
+      this.peerNames.delete(this.startedPid);
       this.transcript.stop();
       this.typist.reset();
       this.tuiStatus = null;
@@ -102,8 +107,16 @@ class Slot extends EventEmitter {
       this.emit('changed');
     });
     t.on('meta', (meta) => {
+      // ListAgents told this session its own name.
+      if (meta.peerName && this.pid) this.peerNames.set(this.pid, meta.peerName);
       this.send({ type: 'meta', meta });
       this.emit('changed');
+    });
+    // A message from another session tells that session's name.
+    t.on('peer', ({ pid, name }) => {
+      if (this.peerNames.get(pid) === name) return;
+      this.peerNames.set(pid, name);
+      this.emit('peer-name');
     });
     // After /clear or /resume inside the session, the session id changes.
     t.on('file', () => {
@@ -119,6 +132,12 @@ class Slot extends EventEmitter {
 
   get running() {
     return this.session.running;
+  }
+
+  // The `claude` process id: other sessions reach this one at
+  // /tmp/cc-socks/<pid>.sock, so messages from it carry this pid.
+  get pid() {
+    return this.session.proc?.pid ?? null;
   }
 
   get sessionId() {
@@ -152,6 +171,8 @@ class Slot extends EventEmitter {
       folder: this.folder,
       sessionId: this.sessionId,
       title: this.transcript.meta.title || null,
+      pid: this.running ? this.pid : null,
+      peerName: (this.running && (this.transcript.meta.peerName || this.peerNames.get(this.pid))) || null,
       state: !this.running ? 'exited' : status?.dialog ? 'waiting' : working ? 'working' : 'ready',
     };
   }

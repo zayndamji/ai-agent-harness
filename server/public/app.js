@@ -43,6 +43,18 @@ const chat = new ChatView({
   tasks: $('tasks'),
   background: $('background'),
   onTerminal: () => showView('terminal'),
+  // The other side of a message between sessions, when it runs here: by the
+  // pid of its socket, or by its name.
+  peers: {
+    // A pid only counts for messages since that session started: an earlier
+    // process may have had the same pid.
+    find: ({ pid, name, at }) => {
+      const since = (s) => !at || Date.parse(at) >= s.startedAt;
+      const slot = slots.find((s) => s.running && ((pid && s.pid === pid && since(s)) || (name && s.peerName === name)));
+      return slot ? { sid: slot.sid, name: slot.peerName || name, title: slot.title } : null;
+    },
+    open: (next) => openSlot(next),
+  },
   onTurnEnd: (text) => {
     notify('Claude finished', text);
     // Claude may have changed files during the turn.

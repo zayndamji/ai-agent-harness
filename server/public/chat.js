@@ -30,6 +30,7 @@ const ICONS = {
   chev: '<path d="M9 6l6 6-6 6"/>',
   question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
 };
 const TOOL_ICONS = {
   Bash: 'terminal', BashOutput: 'terminal', KillShell: 'terminal',
@@ -39,7 +40,17 @@ const TOOL_ICONS = {
   TodoWrite: 'list', TaskCreate: 'list', TaskUpdate: 'list', TaskList: 'list',
   Task: 'agent', Agent: 'agent',
   AskUserQuestion: 'question',
+  SendMessage: 'mail', ListAgents: 'agent',
 };
+
+// SendMessage's `to`: a session name, "name [ref]", or the socket of the
+// session that wrote ("uds:/tmp/cc-socks/<pid>.sock").
+function parseRecipient(to) {
+  const text = String(to || '');
+  const pid = Number(/cc-socks\/(\d+)\.sock$/.exec(text)?.[1]);
+  if (Number.isInteger(pid)) return { pid, name: null };
+  return { pid: null, name: text.replace(/\s*\[[0-9a-f]+\]$/, '') || null };
+}
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -140,7 +151,13 @@ function todoList(todos) {
 }
 
 export class ChatView {
-  constructor({ list, scroll, empty, jump, tasks, background, onTerminal, onTurnEnd }) {
+  // `peers.find({pid, name})` says which running session, if any, is the
+  // other side of a message: {sid, name, title}; `peers.open(sid)` opens it.
+  constructor({ list, scroll, empty, jump, tasks, background, onTerminal, onTurnEnd, peers }) {
+    this.peers = peers;
+    // Names of the sessions that messaged this one, by the pid of their
+    // socket: a reply is often addressed to the socket, not the name.
+    this.peerNames = new Map();
     this.background = background;
     this.jobs = new Map();
     this.agentCards = new Map();
@@ -163,6 +180,7 @@ export class ChatView {
     this.list.replaceChildren(this.empty);
     this.empty.hidden = false;
     this.tools.clear();
+    this.peerNames.clear();
     this.pending = [];
     this.tasks.hidden = true;
     this.tasks.replaceChildren();
@@ -253,8 +271,51 @@ export class ChatView {
     this.tasks.hidden = false;
   }
 
+  // The other session of a message: a link that opens it when it runs here,
+  // else its name.
+  peerLink({ pid, name, at }) {
+    const peer = this.peers?.find({ pid, name, at });
+    const label = peer?.name || name || peer?.title || 'another session';
+    if (!peer?.sid) return el('span', 'peer-name', label);
+    const link = el('button', 'peer-link', label);
+    link.type = 'button';
+    link.title = peer.title ? `Open “${peer.title}”` : 'Open that session';
+    link.addEventListener('click', () => this.peers.open(peer.sid));
+    return link;
+  }
+
+  // A message another Claude session sent this one (its SendMessage).
+  peerMessage(entry) {
+    if (entry.pid && entry.name) this.peerNames.set(entry.pid, entry.name);
+    const node = el('div', 'peer-msg');
+    if (entry.at) node.title = new Date(entry.at).toLocaleString();
+    const head = el('div', 'peer-head');
+    head.append(icon('mail'), el('span', '', 'Message from'), this.peerLink({ pid: entry.pid, name: entry.name, at: entry.at }));
+    node.append(head, markdown(entry.text || ''));
+    return node;
+  }
+
+  // This session's SendMessage: who it went to and what it said. The result
+  // says whether it reached the other session's inbox.
+  messageCard(entry) {
+    const input = entry.input || {};
+    const node = el('div', 'peer-msg out');
+    node.dataset.state = 'pending';
+    const head = el('div', 'peer-head');
+    const state = el('span', 'tool-state');
+    state.append(el('span', 'spinner'));
+    const to = parseRecipient(input.to);
+    to.name ||= this.peerNames.get(to.pid) || null;
+    head.append(icon('mail'), el('span', '', 'Message to'), this.peerLink({ ...to, at: entry.at }), state);
+    node.append(head, markdown(input.message || input.content || ''));
+    const card = { key: entry.toolUseId, node, state, name: entry.name, input, message: true };
+    this.tools.set(entry.toolUseId, card);
+    return node;
+  }
+
   toolCard(entry) {
     if (entry.name === 'AskUserQuestion') return this.questionCard(entry);
+    if (entry.name === 'SendMessage') return this.messageCard(entry);
     // The card is a box around a <details>, so an output preview can sit
     // below the header while the details are closed.
     const node = el('div', 'tool');
@@ -473,6 +534,20 @@ export class ChatView {
   }
 
   fillResult(card, entry) {
+    if (card.message) {
+      let result = null;
+      try {
+        result = JSON.parse(entry.text);
+      } catch {
+        // Not JSON: an error message.
+      }
+      const sent = !entry.isError && result?.success;
+      card.node.dataset.state = sent ? 'done' : 'error';
+      card.state.replaceChildren(icon(sent ? 'check' : 'x'));
+      card.state.title = sent ? 'Delivered to its inbox' : '';
+      if (!sent) card.node.append(el('div', 'peer-error', result?.message || result?.error || entry.text || 'Not delivered'));
+      return;
+    }
     if (card.question) {
       // The result reads: User has answered your questions: "Q"="A", "Q2"="A2".
       const answers = [...(entry.text || '').matchAll(/"([^"]*)"="([^"]*)"/g)].map((m) => m[2]);
@@ -581,6 +656,8 @@ export class ChatView {
       }
       case 'tool-use':
         return this.toolCard(entry);
+      case 'peer-message':
+        return this.peerMessage(entry);
       case 'tool-result': {
         const card = this.tools.get(entry.toolUseId);
         if (card) {

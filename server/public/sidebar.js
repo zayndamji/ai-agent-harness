@@ -84,9 +84,11 @@ export class Sidebar {
     const main = el('button', 'slot-main');
     main.type = 'button';
     const where = slot.folder ? `/workspace/${slot.folder}` : '/workspace';
-    main.title = `${slot.title || 'New session'}\n${where}`;
+    // The name other sessions message it by, once known; it starts with the folder's name.
+    const named = slot.peerName ? `\nOther sessions call it ${slot.peerName}` : '';
+    main.title = `${slot.title || 'New session'}\n${where}${named}`;
     const text = el('span', 'slot-text');
-    text.append(el('span', 'slot-title', slot.title || 'New session'), el('span', 'slot-sub', `${folderName(slot.folder)} · ${STATE_TEXT[slot.state] || slot.state}`));
+    text.append(el('span', 'slot-title', slot.title || 'New session'), el('span', 'slot-sub', `${slot.peerName || folderName(slot.folder)} · ${STATE_TEXT[slot.state] || slot.state}`));
     main.append(el('span', 'slot-dot'), text);
     main.addEventListener('click', () => {
       this.closeDrawer();

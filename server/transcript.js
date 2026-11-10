@@ -103,6 +103,33 @@ function taskNotification(text) {
   };
 }
 
+// A message from another Claude session (its SendMessage), delivered as a
+// user line with `origin.kind: "peer"`. Its text wraps the body in
+// instructions for Claude; `origin.body` is what the other session sent.
+// Each session listens on /tmp/cc-socks/<pid>.sock, so the pid says which
+// session sent it.
+const SOCKET_PID = /cc-socks\/(\d+)\.sock$/;
+function peerPid(address) {
+  const pid = Number(SOCKET_PID.exec(address || '')?.[1]);
+  return Number.isInteger(pid) ? pid : null;
+}
+
+function peerEntry(line, base) {
+  const origin = line.origin;
+  const wrapped = typeof line.message?.content === 'string' ? tag(line.message.content, 'cross-session-message') : undefined;
+  return {
+    ...base,
+    kind: 'peer-message',
+    name: typeof origin.name === 'string' ? origin.name : null,
+    pid: Number.isInteger(origin.verifiedPeerPid) ? origin.verifiedPeerPid : peerPid(origin.from),
+    text: clip(String(origin.body ?? wrapped ?? '').trim()),
+  };
+}
+
+// ListAgents starts with "This session is <name> [<ref>]": the name other
+// sessions use for this one.
+const SELF_NAME = /^This session is (\S+) \[([0-9a-f]+)\]/;
+
 // One transcript line becomes zero or more entries. Bookkeeping lines
 // (attachments, API requests, cost state, snapshots) become none.
 // Agents' own transcripts (`sidechain`) are read only when asked for.
@@ -134,6 +161,7 @@ function toEntries(line, { sidechain = false } = {}) {
   const content = line.message?.content;
   if (line.type === 'user') {
     if (line.isCompactSummary) return [{ ...base, kind: 'compact-summary', text: clip(resultText(content)) }];
+    if (line.origin?.kind === 'peer') return [peerEntry(line, base)];
     if (line.isMeta) return [];
     if (typeof content === 'string') {
       if (content.startsWith('<local-command-caveat>')) return [];
@@ -178,7 +206,7 @@ function toEntries(line, { sidechain = false } = {}) {
   return [];
 }
 
-const emptyMeta = () => ({ title: null, model: null, permissionMode: null, contextTokens: null, outputTokens: 0 });
+const emptyMeta = () => ({ title: null, model: null, permissionMode: null, contextTokens: null, outputTokens: 0, peerName: null });
 
 class TranscriptFollower extends EventEmitter {
   // `mayFollow(id, mtimeMs)`: whether the follower may switch to the
@@ -208,6 +236,12 @@ class TranscriptFollower extends EventEmitter {
     this.agents = new Map();
     this.setEntries([]);
     this.timer = setInterval(() => this.poll(), POLL_MS);
+  }
+
+  // Whether a line was written since this session started, not earlier in a
+  // resumed conversation.
+  isCurrent(line) {
+    return Date.parse(line.timestamp) >= this.since;
   }
 
   get currentSessionId() {
@@ -246,6 +280,9 @@ class TranscriptFollower extends EventEmitter {
     const before = JSON.stringify(meta);
     if (line.type === 'ai-title' && line.aiTitle) meta.title = line.aiTitle;
     if (line.type === 'permission-mode' && line.permissionMode) meta.permissionMode = line.permissionMode;
+    // Only from this run: a resumed conversation's earlier listings name an earlier process.
+    const listing = line.type === 'user' && !line.isSidechain && this.isCurrent(line) && line.toolUseResult?.listing;
+    if (typeof listing === 'string' && SELF_NAME.test(listing)) meta.peerName = SELF_NAME.exec(listing)[1];
     if (line.type === 'assistant' && !line.isSidechain && line.message) {
       const m = line.message;
       if (m.model && !m.model.startsWith('<')) meta.model = m.model;
@@ -341,8 +378,11 @@ class TranscriptFollower extends EventEmitter {
           this.recentCommands = [];
         }
         entry.id = `${line.uuid || this.main.offset}:${added.length}`;
-        // Claude Code answers a shell command too, so it starts a turn.
-        if (entry.kind === 'user' || entry.kind === 'shell') {
+        // A message from another session tells which session has which name.
+        if (entry.kind === 'peer-message' && entry.name && entry.pid && this.isCurrent(line)) this.emit('peer', { pid: entry.pid, name: entry.name });
+        // Claude Code answers a shell command and a peer's message too, so
+        // they start a turn.
+        if (entry.kind === 'user' || entry.kind === 'shell' || entry.kind === 'peer-message') {
           this.turnTokens = 0;
           this.setBusy(true);
         }
@@ -453,6 +493,11 @@ function summarize(file) {
           firstPrompt ||= line.message.content;
           lastPrompt = lastPrompt || line.message.content;
         }
+        // A session another one started by messaging it has no typed prompt.
+        if (line.type === 'user' && line.origin?.kind === 'peer' && !line.isSidechain) {
+          prompts += 1;
+          firstPrompt ||= `Message from ${line.origin.name || 'another session'}: ${String(line.origin.body || '').trim()}`;
+        }
       }
     }
     return { title, lastPrompt: (lastPrompt || firstPrompt || '').slice(0, 200), mtime: mtimeMs, size, cwd, hasPrompts: prompts > 0 || Boolean(title) };
@@ -527,4 +572,4 @@ function countSessions(cwd) {
   }
 }
 
-module.exports = { TranscriptFollower, toEntries, listSessions, listAllSessions, countSessions, projectDir };
+module.exports = { TranscriptFollower, toEntries, listSessions, listAllSessions, countSessions, projectDir, peerPid };
