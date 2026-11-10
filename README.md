@@ -43,13 +43,13 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 Needs Docker (Docker Desktop on a Mac).
 
 ```bash
-cp .env.example .env                       # then set HARNESS_PASSWORD in .env
-docker compose up -d --build web           # build the image and start the web UI
+cp .env.example .env                       # once: then set HARNESS_PASSWORD in .env
+./start.sh                                 # start Docker if needed, build, start the web UI, print its address
+./stop.sh                                  # stop the web UI and end the session (volumes are kept)
 docker compose logs -f web                 # follow the server's log
-docker compose down                        # stop it (volumes are kept)
 ```
 
-Open http://127.0.0.1:8080, log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
+Open the address `./start.sh` prints (http://127.0.0.1:8080 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
 
 The web UI listens only on this computer. To reach it from other machines on your network, set `HARNESS_BIND=0.0.0.0` in `.env`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`.
 
