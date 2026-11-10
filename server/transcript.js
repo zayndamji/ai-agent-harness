@@ -148,14 +148,22 @@ class TranscriptFollower extends EventEmitter {
     this.timer = null;
   }
 
-  // Follows the newest transcript written since `sinceMs`. After /clear or
-  // /resume, Claude Code writes to another file, and the follower switches to it.
-  start(sinceMs) {
+  // Follows the session's own transcript, `<sessionId>.jsonl`, which the
+  // server chose (new sessions) or Claude Code appends to (resumed ones).
+  // After /clear or /resume inside the session, Claude Code writes another
+  // file in the same folder, and the follower switches to the newest one.
+  start(sinceMs, { cwd, sessionId } = {}) {
     this.stop();
+    if (cwd) this.dir = projectDir(cwd);
     this.since = sinceMs;
+    this.sessionId = sessionId || null;
     this.file = null;
     this.setEntries([]);
     this.timer = setInterval(() => this.poll(), POLL_MS);
+  }
+
+  get currentSessionId() {
+    return this.file ? path.basename(this.file, '.jsonl') : this.sessionId;
   }
 
   stop() {
@@ -204,25 +212,30 @@ class TranscriptFollower extends EventEmitter {
     return JSON.stringify(meta) !== before;
   }
 
+  // The session's own file wins unless another file in the folder was
+  // written after it since the session started (/clear, /resume).
   newestFile() {
     let best = null;
+    let own = null;
     let names;
     try {
       names = fs.readdirSync(this.dir);
     } catch {
-      return null;
+      names = [];
     }
     for (const name of names) {
       if (!name.endsWith('.jsonl')) continue;
       const file = path.join(this.dir, name);
       try {
         const { mtimeMs } = fs.statSync(file);
-        if (mtimeMs >= this.since && (!best || mtimeMs > best.mtimeMs)) best = { file, mtimeMs };
+        if (this.sessionId && name === `${this.sessionId}.jsonl`) own = { file, mtimeMs };
+        else if (mtimeMs >= this.since && (!best || mtimeMs > best.mtimeMs)) best = { file, mtimeMs };
       } catch {
         // The file went away between readdir and stat.
       }
     }
-    return best?.file || null;
+    if (own && (!best || own.mtimeMs >= best.mtimeMs)) return own.file;
+    return best?.file || own?.file || null;
   }
 
   poll() {
@@ -233,6 +246,7 @@ class TranscriptFollower extends EventEmitter {
       this.offset = 0;
       this.partial = '';
       this.setEntries([]);
+      this.emit('file', this.currentSessionId);
     }
     let chunk;
     try {
@@ -289,4 +303,116 @@ class TranscriptFollower extends EventEmitter {
   }
 }
 
-module.exports = { TranscriptFollower, toEntries };
+// Reads the head and tail of a transcript for its title and last prompt.
+// Transcripts can be megabytes, and both kinds of line recur, so the ends are enough.
+function summarize(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const { size, mtimeMs } = fs.fstatSync(fd);
+    const chunks = [];
+    const read = (pos, len) => {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, pos);
+      chunks.push(buf.toString('utf8'));
+    };
+    const HEAD = 64 * 1024;
+    const TAIL = 256 * 1024;
+    read(0, Math.min(size, HEAD));
+    if (size > HEAD) read(Math.max(HEAD, size - TAIL), Math.min(TAIL, size - HEAD));
+    let title = null;
+    let lastPrompt = null;
+    let firstPrompt = null;
+    let prompts = 0;
+    let cwd = null;
+    for (const chunk of chunks) {
+      for (const text of chunk.split('\n')) {
+        if (!text.startsWith('{')) continue;
+        let line;
+        try {
+          line = JSON.parse(text);
+        } catch {
+          continue;
+        }
+        if (!cwd && typeof line.cwd === 'string' && !line.isSidechain) cwd = line.cwd;
+        if (line.type === 'ai-title' && line.aiTitle) title = line.aiTitle;
+        if (line.type === 'last-prompt' && typeof line.lastPrompt === 'string') lastPrompt = line.lastPrompt;
+        if (line.type === 'user' && !line.isMeta && !line.isSidechain && typeof line.message?.content === 'string' && !line.message.content.startsWith('<')) {
+          prompts += 1;
+          firstPrompt ||= line.message.content;
+          lastPrompt = lastPrompt || line.message.content;
+        }
+      }
+    }
+    return { title, lastPrompt: (lastPrompt || firstPrompt || '').slice(0, 200), mtime: mtimeMs, size, cwd, hasPrompts: prompts > 0 || Boolean(title) };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+// Past sessions for a folder, newest first. Sessions with no prompt at all
+// (started and closed) are left out.
+function listSessions(cwd) {
+  const dir = projectDir(cwd);
+  let names;
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^[0-9a-f-]{36}\.jsonl$/.test(n));
+  } catch {
+    return [];
+  }
+  const sessions = [];
+  for (const name of names) {
+    try {
+      const summary = summarize(path.join(dir, name));
+      if (summary.hasPrompts) sessions.push({ id: name.slice(0, 36), ...summary });
+    } catch {
+      // Unreadable or vanished; skip it.
+    }
+  }
+  return sessions.sort((a, b) => b.mtime - a.mtime);
+}
+
+// Every session in every folder, newest first. Project folder names are a
+// lossy encoding of the path, so each session's folder comes from the `cwd`
+// its own lines record. Only folders inside `root` are listed.
+function listAllSessions(root, limit = 300) {
+  const projects = path.dirname(projectDir(root));
+  const rootReal = fs.realpathSync(root);
+  const found = [];
+  let dirs;
+  try {
+    dirs = fs.readdirSync(projects);
+  } catch {
+    return [];
+  }
+  for (const dir of dirs) {
+    let names;
+    try {
+      names = fs.readdirSync(path.join(projects, dir)).filter((n) => /^[0-9a-f-]{36}\.jsonl$/.test(n));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      try {
+        const summary = summarize(path.join(projects, dir, name));
+        if (!summary.hasPrompts || !summary.cwd) continue;
+        if (summary.cwd !== rootReal && !summary.cwd.startsWith(rootReal + path.sep)) continue;
+        const folder = path.relative(rootReal, summary.cwd).split(path.sep).join('/');
+        const { cwd, hasPrompts, ...rest } = summary;
+        found.push({ id: name.slice(0, 36), folder, ...rest });
+      } catch {
+        // Unreadable or vanished; skip it.
+      }
+    }
+  }
+  return found.sort((a, b) => b.mtime - a.mtime).slice(0, limit);
+}
+
+function countSessions(cwd) {
+  try {
+    return fs.readdirSync(projectDir(cwd)).filter((n) => n.endsWith('.jsonl')).length;
+  } catch {
+    return 0;
+  }
+}
+
+module.exports = { TranscriptFollower, toEntries, listSessions, listAllSessions, countSessions, projectDir };

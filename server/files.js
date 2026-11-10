@@ -5,6 +5,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
+const { listSessions, listAllSessions, countSessions } = require('./transcript');
 
 const MAX_ENTRIES = 2000;
 const MAX_PREVIEW = 5 * 1024 * 1024;
@@ -54,13 +55,20 @@ class FilesApi {
           }
         }
         const stat = fs.statSync(full);
-        items.push({
+        const item = {
           name: dirent.name,
           type: stat.isDirectory() ? 'dir' : 'file',
           link: dirent.isSymbolicLink(),
           size: stat.size,
           mtime: stat.mtimeMs,
-        });
+        };
+        // What makes a folder a project: a git repo, a CLAUDE.md, past sessions.
+        if (item.type === 'dir') {
+          item.git = fs.existsSync(path.join(full, '.git'));
+          item.claudeMd = fs.existsSync(path.join(full, 'CLAUDE.md'));
+          item.sessions = countSessions(full);
+        }
+        items.push(item);
       } catch {
         items.push({ name: dirent.name, type: 'file', link: dirent.isSymbolicLink(), broken: true, size: 0, mtime: 0 });
       }
@@ -69,10 +77,49 @@ class FilesApi {
     return { path: clean, entries: items };
   }
 
+  // The real folder for a workspace-relative path, for starting a session in it.
+  folder(rel) {
+    const { real, rel: clean } = this.resolve(rel);
+    if (!fs.statSync(real).isDirectory()) {
+      const err = new Error('not a folder');
+      err.status = 400;
+      throw err;
+    }
+    return { real, rel: clean };
+  }
+
+  sessions(rel) {
+    const { real, rel: clean } = this.folder(rel);
+    return { path: clean, sessions: listSessions(real) };
+  }
+
+  // A plain folder name: no slashes, not "." or "..", no control characters.
+  mkdir(parent, name) {
+    const clean = typeof name === 'string' ? name.trim() : '';
+    if (!clean || clean.length > 100 || /[\/\\\x00-\x1f]/.test(clean) || clean === '.' || clean === '..') {
+      const err = new Error('Use a folder name without slashes.');
+      err.status = 400;
+      throw err;
+    }
+    const { real, rel } = this.folder(parent);
+    const target = path.join(real, clean);
+    if (fs.existsSync(target)) {
+      const err = new Error('A file or folder with that name already exists.');
+      err.status = 409;
+      throw err;
+    }
+    fs.mkdirSync(target);
+    return { path: rel ? `${rel}/${clean}` : clean };
+  }
+
   handle(req, res, pathname, query, send) {
     try {
       if (pathname === '/api/files') {
         return send(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(this.list(query.get('path'))));
+      }
+      if (pathname === '/api/sessions') {
+        const body = query.get('all') === '1' ? { sessions: listAllSessions(this.root) } : this.sessions(query.get('path'));
+        return send(res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(body));
       }
       if (pathname === '/api/file') return this.file(res, query, send);
       if (pathname === '/api/archive') return this.archive(res, query, send);

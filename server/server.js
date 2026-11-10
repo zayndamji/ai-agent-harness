@@ -8,7 +8,7 @@ const http = require('node:http');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { Session } = require('./session');
-const { TranscriptFollower } = require('./transcript');
+const { TranscriptFollower, listSessions } = require('./transcript');
 const { readStatus } = require('./screen');
 const { FilesApi } = require('./files');
 
@@ -37,6 +37,7 @@ const FILES = {
   '/app.js': { file: path.join(PUBLIC, 'app.js'), type: 'text/javascript', auth: true },
   '/chat.js': { file: path.join(PUBLIC, 'chat.js'), type: 'text/javascript', auth: true },
   '/files.js': { file: path.join(PUBLIC, 'files.js'), type: 'text/javascript', auth: true },
+  '/sessions.js': { file: path.join(PUBLIC, 'sessions.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
@@ -94,17 +95,19 @@ function tooManyFailures() {
   return failures.length >= MAX_FAILURES_PER_MINUTE;
 }
 
-function readForm(req, limit = 4096) {
+function readBody(req, limit = 4096) {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => {
       body += chunk;
       if (body.length > limit) reject(new Error('body too large'));
     });
-    req.on('end', () => resolve(new URLSearchParams(body)));
+    req.on('end', () => resolve(body));
     req.on('error', reject);
   });
 }
+
+const readForm = async (req) => new URLSearchParams(await readBody(req));
 
 function send(res, status, headers, body = '') {
   res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
@@ -150,14 +153,34 @@ function handleLogout(req, res) {
 
 // ---- HTTP
 
-const FILE_APIS = new Set(['/api/files', '/api/file', '/api/archive']);
+const FILE_APIS = new Set(['/api/files', '/api/file', '/api/archive', '/api/sessions']);
+const json = (res, status, body) => send(res, status, { 'Content-Type': 'application/json' }, JSON.stringify(body));
+
+// POST /api/folders {path, name}: a new folder inside a workspace folder.
+async function handleMkdir(req, res) {
+  if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
+  if (!sameOrigin(req, { required: true })) return json(res, 403, { error: 'forbidden' });
+  let body;
+  try {
+    body = JSON.parse(await readBody(req));
+  } catch {
+    return json(res, 400, { error: 'expected JSON' });
+  }
+  try {
+    json(res, 201, files.mkdir(body.path, body.name));
+  } catch (err) {
+    if (err.code === 'ENOENT') return json(res, 404, { error: 'That folder does not exist.' });
+    json(res, err.status || 500, { error: err.message });
+  }
+}
 
 const server = http.createServer((req, res) => {
   const { pathname, searchParams } = new URL(req.url, 'http://localhost');
   if (req.method === 'GET' && FILE_APIS.has(pathname)) {
-    if (!tokenOf(req)) return send(res, 401, { 'Content-Type': 'application/json' }, '{"error":"not logged in"}');
+    if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
     return files.handle(req, res, pathname, searchParams, send);
   }
+  if (req.method === 'POST' && pathname === '/api/folders') return void handleMkdir(req, res);
   if (req.method === 'POST' && pathname === '/login') return void handleLogin(req, res);
   if (req.method === 'POST' && pathname === '/logout') return handleLogout(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, {}, 'Method not allowed');
@@ -201,8 +224,17 @@ function scheduleStatus() {
 // output can stop while a dialog waits, so also read once a second.
 setInterval(() => session.running && scheduleStatus(), 1000).unref();
 
+// The session's folder relative to the workspace ('' is the workspace itself).
+let sessionFolder = '';
+
 function state() {
-  return { type: 'state', running: session.running, startedAt: session.startedAt };
+  return {
+    type: 'state',
+    running: session.running,
+    startedAt: session.startedAt,
+    folder: sessionFolder,
+    sessionId: session.running ? transcript.currentSessionId : null,
+  };
 }
 
 function broadcast(message) {
@@ -238,8 +270,6 @@ function attach(client) {
 session.on('start', () => {
   broadcast({ type: 'reset' });
   broadcast(state());
-  // A little slack, so a transcript created in the same second still counts.
-  transcript.start(session.startedAt - 2000);
 });
 session.on('output', (data) => {
   broadcast({ type: 'output', data });
@@ -249,17 +279,61 @@ transcript.on('reset', () => broadcast({ type: 'chat-reset' }));
 transcript.on('entries', (entries) => broadcast({ type: 'chat', entries }));
 transcript.on('busy', (busy) => broadcast({ type: 'chat-busy', busy }));
 transcript.on('meta', (meta) => broadcast({ type: 'meta', meta }));
+// After /clear or /resume inside the session, the session id changes.
+transcript.on('file', () => broadcast(state()));
+
+// A start that asked to replace the running session waits here until it exits.
+let pendingStart = null;
+
 session.on('exit', ({ exitCode, signal }) => {
   console.log(`claude exited (code ${exitCode}, signal ${signal})`);
   transcript.stop();
   tuiStatus = null;
   broadcast({ type: 'tui', status: null });
-  broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested) });
+  broadcast({ type: 'exit', exitCode, signal, stopped: Boolean(session.stopRequested), replaced: Boolean(pendingStart) });
   session.stopRequested = false;
   broadcast(state());
+  if (pendingStart) {
+    const { client, msg } = pendingStart;
+    pendingStart = null;
+    startSession(client, msg);
+  }
 });
 
 const size = (n) => Number.isInteger(n) && n >= 2 && n <= 1000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// start {cols, rows, folder?, resume?}: folder is relative to the workspace;
+// resume is 'latest', a session id from that folder, or absent for a new
+// session. New sessions get an id from the server (--session-id), so the
+// Chat tab follows exactly that transcript.
+function startSession(client, msg) {
+  const fail = (message) => client.send(JSON.stringify({ type: 'error', message }));
+  let folder;
+  try {
+    folder = files.folder(msg.folder || '');
+  } catch (err) {
+    return fail(err.code === 'ENOENT' ? 'That folder does not exist.' : `Can't start there: ${err.message}`);
+  }
+  let sessionId = msg.resume;
+  if (sessionId === 'latest') sessionId = listSessions(folder.real)[0]?.id;
+  if (sessionId && !UUID.test(sessionId)) return fail('That session id is not valid.');
+  if (sessionId && !listSessions(folder.real).some((s) => s.id === sessionId)) return fail('That session is not in this folder.');
+  const resuming = Boolean(sessionId);
+  sessionId ||= crypto.randomUUID();
+  const args = [...CLAUDE_ARGS, ...(resuming ? ['--resume', sessionId] : ['--session-id', sessionId])];
+  try {
+    sessionFolder = folder.rel;
+    // A little slack, so a transcript created in the same second still counts.
+    transcript.start(Date.now() - 2000, { cwd: folder.real, sessionId });
+    session.start(msg.cols, msg.rows, { cwd: folder.real, args });
+    console.log(`claude started in /${folder.rel || ''} (${resuming ? `resuming ${sessionId}` : `new ${sessionId}`}, ${msg.cols}x${msg.rows})`);
+  } catch (err) {
+    transcript.stop();
+    console.error('could not start claude:', err.message);
+    fail(`Could not start claude: ${err.message}`);
+  }
+}
 
 function handleMessage(client, raw) {
   let msg;
@@ -270,14 +344,16 @@ function handleMessage(client, raw) {
   }
   switch (msg.type) {
     case 'start':
-      if (session.running || !size(msg.cols) || !size(msg.rows)) return;
-      try {
-        session.start(msg.cols, msg.rows);
-        console.log(`claude started (${msg.cols}x${msg.rows})`);
-      } catch (err) {
-        console.error('could not start claude:', err.message);
-        client.send(JSON.stringify({ type: 'error', message: `Could not start claude: ${err.message}` }));
+      if (!size(msg.cols) || !size(msg.rows)) return;
+      if (session.running) {
+        // One session at a time: replacing stops the current one first.
+        if (!msg.replace) return;
+        pendingStart = { client, msg };
+        session.stopRequested = true;
+        session.stop();
+        return;
       }
+      startSession(client, msg);
       return;
     case 'input':
       if (typeof msg.data === 'string') session.write(msg.data);

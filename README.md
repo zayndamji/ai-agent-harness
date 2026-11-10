@@ -10,6 +10,8 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
 - Notifies you when Claude finishes or needs an answer while the tab is in the background.
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
+- Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders.
+- Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
 - Keeps the session running when the browser closes, and shows the current screen when you come back.
 - Keeps the session's files in container volumes, never in the host's home directory.
@@ -31,7 +33,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | --- | --- |
 | `Dockerfile` | The image: Claude Code CLI, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files tab's API), `public/` (browser page) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files and Sessions tabs' API), `public/` (browser page) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
 | `context/` | Agent memory: design notes, findings and guidelines |
 | `CLAUDE.md`, `AGENTS.md` | Instructions for Claude Code and Codex sessions |
@@ -84,6 +86,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ Password login (`server/server.js`)
 - ✅ A signed-in session answering a message from the web UI
 - ✅ Chat tab with messages, tool calls and results (`server/transcript.js`, `server/public/chat.js`)
+- ✅ Start or resume a session in any workspace folder, and a Sessions tab across all folders (`server/public/files.js`, `server/public/sessions.js`)
 
 ### Several sessions with message passing
 

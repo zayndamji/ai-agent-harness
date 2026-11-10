@@ -26,14 +26,17 @@ class Session extends EventEmitter {
     return this.proc !== null;
   }
 
-  start(cols, rows) {
+  // `cwd` and `args` may change per session: each start can pick a folder and
+  // whether to resume.
+  start(cols, rows, { cwd = this.cwd, args = this.args } = {}) {
     if (this.proc) return;
+    this.cwd = cwd;
     this.mirror?.dispose();
     this.mirror = new Terminal({ cols, rows, scrollback: SCROLLBACK, allowProposedApi: true });
     this.serializer = new SerializeAddon();
     this.mirror.loadAddon(this.serializer);
 
-    this.proc = pty.spawn(this.command, this.args, {
+    this.proc = pty.spawn(this.command, args, {
       name: 'xterm-256color',
       cols,
       rows,

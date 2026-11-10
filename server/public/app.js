@@ -5,6 +5,7 @@ import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
 import { ChatView, tokens } from '/chat.js';
 import { FilesView } from '/files.js';
+import { SessionsView } from '/sessions.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -44,7 +45,16 @@ const chat = new ChatView({
     if (view === 'files') filesView.load();
   },
 });
-const filesView = new FilesView($('view-files'));
+
+// What the browsers know about the running session, for the Files and Sessions tabs.
+let current = { running: false, folder: '', sessionId: null };
+const sessionInfo = () => current;
+const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
+const sessionsView = new SessionsView($('view-sessions'), {
+  onStart: (opts) => startSession(opts),
+  onOpenFolder: (folder) => openFolder(folder),
+  session: sessionInfo,
+});
 
 let ws = null;
 let running = false;
@@ -91,24 +101,36 @@ function showView(next) {
   $('view-terminal').hidden = next !== 'terminal';
   $('view-chat').hidden = next !== 'chat';
   $('view-files').hidden = next !== 'files';
-  // The Files tab works without a session, so the idle card stays off it.
-  document.body.classList.toggle('files-open', next === 'files');
+  $('view-sessions').hidden = next !== 'sessions';
+  // The Files and Sessions tabs work without a session, so the idle card and
+  // the message box stay off them.
+  document.body.classList.toggle('files-open', next === 'files' || next === 'sessions');
   store.set('harness-view', next);
+  if (next === 'terminal' || next === 'chat') store.set('harness-session-view', next);
   if (next === 'terminal') {
     fitTerminal();
     if (running) term.focus();
   } else if (next === 'chat') {
     chat.toBottom();
     if (running) message.focus();
-  } else {
+  } else if (next === 'files') {
     filesView.load();
+  } else {
+    sessionsView.load();
   }
+}
+
+function openFolder(folder) {
+  filesView.closePreview();
+  filesView.dir = folder;
+  showView('files');
 }
 
 for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 }
-showView(['chat', 'files'].includes(store.get('harness-view')) ? store.get('harness-view') : 'terminal');
+const savedView = store.get('harness-view');
+showView(['chat', 'files', 'sessions'].includes(savedView) ? savedView : 'terminal');
 
 // ---- Status, title and notifications
 
@@ -235,8 +257,7 @@ function showState(isRunning, exitText) {
   message.placeholder = isRunning ? 'Message Claude' : 'Start a session to send messages';
   if (exitText) {
     idleTitle.textContent = exitText;
-    idleText.textContent = 'Start a new session to keep working. Files in the workspace are kept.';
-    startBtn.textContent = 'Start new session';
+    idleText.textContent = 'Start a new session, pick a folder, or resume an earlier conversation. Files in the workspace are kept.';
   }
   if (isRunning && view === 'terminal') term.focus();
   renderTui();
@@ -251,10 +272,19 @@ function connect() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     switch (msg.type) {
-      case 'state':
+      case 'state': {
+        const moved = current.folder !== (msg.folder || '') || current.sessionId !== msg.sessionId;
+        current = { running: msg.running, folder: msg.folder || '', sessionId: msg.sessionId || null };
         showState(msg.running);
+        renderFolderChip();
         if (msg.running) sendJson({ type: 'resize', cols: term.cols, rows: term.rows });
+        // The lists mark the running session, so redraw the open one.
+        if (moved || !msg.running) {
+          if (view === 'files') filesView.load();
+          if (view === 'sessions') sessionsView.load();
+        }
         break;
+      }
       case 'reset':
         term.reset();
         break;
@@ -262,10 +292,13 @@ function connect() {
         term.write(msg.data);
         break;
       case 'exit':
-        showState(false, msg.stopped ? 'Session stopped' : `Claude Code exited (code ${msg.exitCode})`);
+        // When switching sessions the next one starts right away; keep the card quiet.
+        showState(false, msg.replaced ? 'Switching session…' : msg.stopped ? 'Session stopped' : `Claude Code exited (code ${msg.exitCode})`);
         break;
       case 'error':
+        idleTitle.textContent = 'Could not start';
         idleText.textContent = msg.message;
+        if (view === 'files' || view === 'sessions') alert(msg.message);
         break;
       case 'chat-reset':
         chat.reset();
@@ -304,18 +337,36 @@ term.onResize(({ cols, rows }) => {
 });
 new ResizeObserver(fitTerminal).observe(terminalEl);
 
-startBtn.addEventListener('click', () => {
-  idleTitle.textContent = 'Starting…';
-  if (view !== 'terminal') {
-    // Size the terminal before starting, so Claude Code draws at the right width.
-    $('view-terminal').hidden = false;
-    fitTerminal();
-    $('view-terminal').hidden = true;
-  } else {
-    fitTerminal();
+const folderLabel = (folder) => (folder ? `/workspace/${folder}` : '/workspace');
+
+function renderFolderChip() {
+  $('folder-chip').hidden = !current.running;
+  $('folder-chip-text').textContent = current.folder || 'workspace';
+  $('folder-chip').title = `Session folder: ${folderLabel(current.folder)}. Open it in the Files tab.`;
+}
+$('folder-chip').addEventListener('click', () => openFolder(current.folder));
+
+// Starts a session in a folder: new, the latest conversation ('latest'), or a
+// given one. One session at a time, so a running one is stopped first.
+function startSession({ folder = '', resume } = {}) {
+  if (current.running) {
+    const what = resume ? 'resume that conversation' : 'start a new session';
+    if (!confirm(`Stop the running session in ${folderLabel(current.folder)} and ${what} in ${folderLabel(folder)}?`)) return;
   }
-  sendJson({ type: 'start', cols: term.cols, rows: term.rows });
-});
+  idleTitle.textContent = 'Starting…';
+  // Size the terminal before starting, so Claude Code draws at the right width.
+  const next = store.get('harness-session-view') === 'chat' ? 'chat' : 'terminal';
+  const wasHidden = $('view-terminal').hidden;
+  $('view-terminal').hidden = false;
+  fitTerminal();
+  $('view-terminal').hidden = wasHidden;
+  sendJson({ type: 'start', cols: term.cols, rows: term.rows, folder, resume, replace: current.running });
+  showView(next);
+}
+
+startBtn.addEventListener('click', () => startSession({ folder: '' }));
+$('choose-folder').addEventListener('click', () => showView('files'));
+$('choose-session').addEventListener('click', () => showView('sessions'));
 
 stopBtn.addEventListener('click', () => {
   if (confirm('Stop the session? Claude Code will exit.')) sendJson({ type: 'stop' });

@@ -17,12 +17,17 @@
         <span class="brand-name">Claude Harness</span>
       </div>
       <span id="status" class="status" data-state="connecting"><span class="status-dot"></span><span id="status-text">Connecting</span></span>
+      <button id="folder-chip" type="button" class="folder-chip header-folder" hidden title="Open the session's folder in the Files tab">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        <span id="folder-chip-text"></span>
+      </button>
     </div>
 
     <nav class="tabs" role="tablist" aria-label="Views">
       <button id="tab-chat" type="button" role="tab" data-view="chat" aria-selected="false">Chat</button>
       <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
       <button id="tab-files" type="button" role="tab" data-view="files" aria-selected="false">Files</button>
+      <button id="tab-sessions" type="button" role="tab" data-view="sessions" aria-selected="false">Sessions</button>
     </nav>
 
     <div class="bar-actions">
@@ -86,13 +91,18 @@
     </section>
 
     <section id="view-files" class="view files-view" role="tabpanel" aria-labelledby="tab-files" hidden></section>
+    <section id="view-sessions" class="view files-view" role="tabpanel" aria-labelledby="tab-sessions" hidden></section>
 
     <div id="idle" class="idle" hidden>
       <div class="idle-card">
         <img src="/favicon.svg" alt="" width="44" height="44">
         <p class="idle-title" id="idle-title">No session running</p>
-        <p class="idle-text" id="idle-text">Start Claude Code in the container's workspace. It keeps running when you close this page.</p>
-        <button id="start" type="button">Start session</button>
+        <p class="idle-text" id="idle-text">Start Claude Code in the workspace, or pick a folder or an earlier conversation. It keeps running when you close this page.</p>
+        <div class="idle-actions">
+          <button id="start" type="button">Start in /workspace</button>
+          <button id="choose-folder" type="button" class="ghost">Choose folder</button>
+          <button id="choose-session" type="button" class="ghost">Resume a conversation</button>
+        </div>
       </div>
     </div>
   </main>
