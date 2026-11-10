@@ -27,7 +27,6 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
 - The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
 - The live status line, suggestions and dialogs are read from the server's copy of the screen.
-- Design details and findings: `context/cli-wrapping.md`, `context/web-ui.md`, `context/chat-view.md` and `context/live-status.md`.
 
 ## Repository layout
 
@@ -37,8 +36,6 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
 | `server/` | The web UI: `server.js` (login, WebSocket), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status from the screen), `files.js` (the Files and Sessions tabs' API), `public/` (browser page; `jobs.js` is the Background panel) |
 | `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
-| `context/` | Agent memory: design notes, findings and guidelines |
-| `CLAUDE.md`, `AGENTS.md` | Instructions for Claude Code and Codex sessions |
 
 ## Run the web UI
 

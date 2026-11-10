@@ -20,6 +20,10 @@ __pycache__/
 data/
 workspaces/
 
-# Workspace-specific agent memory and each person's Claude Code settings
-context/workspace-specific-memory.md
+# Agent memory and instructions stay local to each checkout
+context/
+CLAUDE.md
+AGENTS.md
+
+# Each person's Claude Code settings
 .claude/settings.local.json
