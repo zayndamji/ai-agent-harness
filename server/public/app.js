@@ -6,6 +6,8 @@ import { FitAddon } from '/vendor/addon-fit.mjs';
 import { ChatView, tokens } from '/chat.js';
 import { FilesView } from '/files.js';
 import { SessionsView } from '/sessions.js';
+import { confirmAction, notice } from '/dialog.js';
+import { JobsPanel } from '/jobs.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -38,6 +40,7 @@ const chat = new ChatView({
   empty: $('chat-empty'),
   jump: $('jump'),
   tasks: $('tasks'),
+  background: $('background'),
   onTerminal: () => showView('terminal'),
   onTurnEnd: (text) => {
     notify('Claude finished', text);
@@ -49,6 +52,7 @@ const chat = new ChatView({
 // What the browsers know about the running session, for the Files and Sessions tabs.
 let current = { running: false, folder: '', sessionId: null };
 const sessionInfo = () => current;
+const jobsPanel = new JobsPanel({ root: $('jobs-panel'), toggle: $('jobs-toggle'), count: $('jobs-count'), chat });
 const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
 const sessionsView = new SessionsView($('view-sessions'), {
   onStart: (opts) => startSession(opts),
@@ -105,6 +109,7 @@ function showView(next) {
   // The Files and Sessions tabs work without a session, so the idle card and
   // the message box stay off them.
   document.body.classList.toggle('files-open', next === 'files' || next === 'sessions');
+  document.body.dataset.view = next;
   store.set('harness-view', next);
   if (next === 'terminal' || next === 'chat') store.set('harness-session-view', next);
   if (next === 'terminal') {
@@ -134,17 +139,27 @@ showView(['chat', 'files', 'sessions'].includes(savedView) ? savedView : 'termin
 
 // ---- Status, title and notifications
 
+// Whether Claude is working. The screen is the truth while a session runs:
+// an interrupt before the first reply writes no end-of-turn line, so the
+// transcript alone would say "working" forever. Without a screen reading
+// yet, the transcript decides.
+function isWorking() {
+  if (!running) return false;
+  if (tui) return Boolean(tui.spinner || tui.working);
+  return busy;
+}
+
 function refreshStatus() {
   if (!ws) return;
   if (!running) return setStatus('stopped', 'No session');
-  if (busy) return setStatus('working', 'Working');
+  if (isWorking()) return setStatus('working', 'Working');
   setStatus('running', 'Ready');
 }
 
 function setStatus(state, text) {
   statusEl.dataset.state = state;
   statusText.textContent = text;
-  const prefix = unseen ? `(${unseen}) ` : busy ? '● ' : '';
+  const prefix = unseen ? `(${unseen}) ` : isWorking() ? '● ' : '';
   document.title = prefix + (sessionTitle || BASE_TITLE);
 }
 
@@ -216,15 +231,15 @@ function renderSessionBar() {
 // ---- Live status from the terminal: spinner, tip, suggestion, dialogs
 
 function renderTui() {
-  const working = busy || Boolean(tui?.spinner) || Boolean(tui?.working);
-  $('chat-busy').hidden = !working || !running;
+  const working = isWorking();
+  const waiting = running && Boolean(tui?.dialog);
+  // While a question waits, the answer box replaces the working bar.
+  $('chat-busy').hidden = !working || !running || waiting;
   $('busy-verb').textContent = tui?.spinner || 'Working…';
   $('busy-detail').textContent = tui?.detail ? `· ${tui.detail}` : '';
   $('busy-tip').hidden = !tui?.tip;
   $('busy-tip').textContent = tui?.tip ? `Tip: ${tui.tip}` : '';
-  const waiting = running && Boolean(tui?.dialog);
-  $('dialog-banner').hidden = !waiting;
-  $('dialog-text').textContent = tui?.dialog || '';
+  renderDialog(waiting ? tui.dialog : null);
   const suggestion = running && !working && !message.value && tui?.suggestion;
   $('suggestion').hidden = !suggestion;
   $('suggestion-text').textContent = suggestion || '';
@@ -234,9 +249,81 @@ function renderTui() {
 let lastDialog = null;
 function onTui(status) {
   tui = status;
-  if (tui?.dialog && tui.dialog !== lastDialog) notify('Claude needs your answer', tui.dialog);
-  lastDialog = tui?.dialog || null;
+  const question = tui?.dialog?.question || null;
+  if (question && question !== lastDialog) notify('Claude needs your answer', question);
+  lastDialog = question;
   renderTui();
+}
+
+// The question on screen, with its choices as buttons. A click sends the
+// server the choice; the server moves the highlight there with the arrow keys
+// and presses Enter, as a person would in the Terminal tab.
+let dialogKey = null;
+function renderDialog(dialog) {
+  const banner = $('dialog-banner');
+  banner.hidden = !dialog;
+  if (!dialog) {
+    dialogKey = null;
+    return;
+  }
+  const key = JSON.stringify([dialog.question, dialog.options.map((o) => o.label), dialog.answerable]);
+  if (key === dialogKey) return;
+  dialogKey = key;
+  $('dialog-text').textContent = dialog.question;
+  $('dialog-error').hidden = true;
+  const box = $('dialog-options');
+  box.replaceChildren();
+  for (const option of dialog.options) {
+    const free = option.n === dialog.freeText;
+    const row = document.createElement(free ? 'div' : 'button');
+    row.className = 'dialog-option';
+    if (!free) row.type = 'button';
+    const num = document.createElement('span');
+    num.className = 'dialog-num';
+    num.textContent = option.n;
+    const text = document.createElement('span');
+    text.className = 'dialog-label';
+    text.textContent = free ? 'Your own answer' : option.label;
+    row.append(num, text);
+    if (option.description) {
+      const desc = document.createElement('span');
+      desc.className = 'dialog-desc';
+      desc.textContent = option.description;
+      text.append(desc);
+    }
+    if (free) {
+      const input = document.createElement('input');
+      input.className = 'dialog-input';
+      input.placeholder = 'Type an answer';
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.className = 'small';
+      send.textContent = 'Send';
+      const go = () => input.value.trim() && answer(dialog, option, input.value);
+      send.addEventListener('click', go);
+      input.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), go()));
+      input.disabled = send.disabled = !dialog.answerable;
+      row.append(input, send);
+    } else {
+      row.disabled = !dialog.answerable;
+      row.addEventListener('click', () => answer(dialog, option));
+    }
+    box.append(row);
+  }
+  if (dialog.options.length && !dialog.answerable) showDialogError('This one can only be answered in the Terminal tab.');
+}
+
+function answer(dialog, option, text) {
+  for (const b of $('dialog-options').querySelectorAll('button, input')) b.disabled = true;
+  showDialogError(`Sending “${option.n === dialog.freeText ? text : option.label}”…`, true);
+  sendJson({ type: 'answer', question: dialog.question, option: option.n, text });
+}
+
+function showDialogError(text, quiet) {
+  const node = $('dialog-error');
+  node.hidden = false;
+  node.textContent = text;
+  node.classList.toggle('quiet', Boolean(quiet));
 }
 
 $('suggestion-text').addEventListener('click', () => {
@@ -298,7 +385,7 @@ function connect() {
       case 'error':
         idleTitle.textContent = 'Could not start';
         idleText.textContent = msg.message;
-        if (view === 'files' || view === 'sessions') alert(msg.message);
+        if (view === 'files' || view === 'sessions') notice('Could not start the session', msg.message);
         break;
       case 'chat-reset':
         chat.reset();
@@ -316,6 +403,11 @@ function connect() {
         break;
       case 'tui':
         onTui(msg.status);
+        break;
+      case 'answer-failed':
+        dialogKey = null;
+        renderTui();
+        showDialogError(msg.message);
         break;
     }
   };
@@ -348,10 +440,16 @@ $('folder-chip').addEventListener('click', () => openFolder(current.folder));
 
 // Starts a session in a folder: new, the latest conversation ('latest'), or a
 // given one. One session at a time, so a running one is stopped first.
-function startSession({ folder = '', resume } = {}) {
+async function startSession({ folder = '', resume } = {}) {
   if (current.running) {
     const what = resume ? 'resume that conversation' : 'start a new session';
-    if (!confirm(`Stop the running session in ${folderLabel(current.folder)} and ${what} in ${folderLabel(folder)}?`)) return;
+    const ok = await confirmAction(
+      'Switch sessions?',
+      `This stops the running session in ${folderLabel(current.folder)} and will ${what} in ${folderLabel(folder)}. The stopped conversation is kept and can be resumed.`,
+      'Stop and switch',
+      true,
+    );
+    if (!ok) return;
   }
   idleTitle.textContent = 'Starting…';
   // Size the terminal before starting, so Claude Code draws at the right width.
@@ -368,8 +466,9 @@ startBtn.addEventListener('click', () => startSession({ folder: '' }));
 $('choose-folder').addEventListener('click', () => showView('files'));
 $('choose-session').addEventListener('click', () => showView('sessions'));
 
-stopBtn.addEventListener('click', () => {
-  if (confirm('Stop the session? Claude Code will exit.')) sendJson({ type: 'stop' });
+stopBtn.addEventListener('click', async () => {
+  const ok = await confirmAction('Stop the session?', `Claude Code exits. The conversation is kept and can be resumed from the Sessions tab.`, 'Stop session', true);
+  if (ok) sendJson({ type: 'stop' });
 });
 
 // Escape is how Claude Code's terminal interrupts a turn.
@@ -402,6 +501,8 @@ message.addEventListener('keydown', (event) => {
 message.addEventListener('input', () => {
   message.style.height = '';
   message.style.height = `${message.scrollHeight}px`;
+  // A scroll bar only once the box reaches its tallest.
+  message.style.overflowY = message.scrollHeight > 200 ? 'auto' : 'hidden';
   $('suggestion').hidden = Boolean(message.value) || $('suggestion').hidden;
 });
 

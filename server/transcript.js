@@ -62,13 +62,39 @@ function toolDetail(result) {
   if (typeof result.stderr === 'string' && result.stderr) detail.stderr = clip(result.stderr);
   if (result.interrupted) detail.interrupted = true;
   if (Array.isArray(result.newTodos)) detail.todos = result.newTodos;
+  if (typeof result.backgroundTaskId === 'string') detail.backgroundTaskId = result.backgroundTaskId;
+  // Agent tool: an async agent returns at once and finishes later with a task notification.
+  if (typeof result.agentId === 'string') {
+    detail.agentId = result.agentId;
+    detail.isAsync = Boolean(result.isAsync);
+    if (typeof result.status === 'string') detail.agentStatus = result.status;
+    if (typeof result.resolvedModel === 'string') detail.model = result.resolvedModel;
+  }
   return Object.keys(detail).length ? detail : undefined;
+}
+
+// <task-notification> arrives as a user message when a background command or
+// agent finishes: which tool call started it, its status, a summary, and for
+// agents the final result.
+function taskNotification(text) {
+  if (!text.startsWith('<task-notification>')) return null;
+  const usage = tag(text, 'usage');
+  return {
+    kind: 'task-done',
+    taskId: tag(text, 'task-id') || null,
+    toolUseId: tag(text, 'tool-use-id') || null,
+    status: (tag(text, 'status') || '').trim(),
+    summary: (tag(text, 'summary') || '').trim(),
+    result: clip((tag(text, 'result') || '').trim()),
+    usage: usage ? usage.replace(/\s+/g, ' ').trim().slice(0, 200) : '',
+  };
 }
 
 // One transcript line becomes zero or more entries. Bookkeeping lines
 // (attachments, API requests, cost state, snapshots) become none.
-function toEntries(line) {
-  if (line.isSidechain) return [];
+// Agents' own transcripts (`sidechain`) are read only when asked for.
+function toEntries(line, { sidechain = false } = {}) {
+  if (line.isSidechain && !sidechain) return [];
   const base = { at: line.timestamp };
   if (line.type === 'system') {
     switch (line.subtype) {
@@ -89,7 +115,7 @@ function toEntries(line) {
         return [];
     }
   }
-  if (line.type === 'queue-operation' && line.operation === 'enqueue' && typeof line.content === 'string') {
+  if (line.type === 'queue-operation' && line.operation === 'enqueue' && typeof line.content === 'string' && !line.content.startsWith('<')) {
     return [{ ...base, kind: 'queued', text: line.content }];
   }
   const content = line.message?.content;
@@ -98,6 +124,8 @@ function toEntries(line) {
     if (line.isMeta) return [];
     if (typeof content === 'string') {
       if (content.startsWith('<local-command-caveat>')) return [];
+      const done = taskNotification(content);
+      if (done) return [{ ...base, ...done }];
       if (INTERRUPTED.test(content.trim())) return [{ ...base, kind: 'interrupt' }];
       const entry = commandEntry(content);
       return [{ ...base, ...(entry || { kind: 'user', text: content }) }];
@@ -106,6 +134,8 @@ function toEntries(line) {
     return content.flatMap((b) => {
       if (b.type === 'text') {
         if (b.text.startsWith('<system-reminder>')) return [];
+        const done = taskNotification(b.text);
+        if (done) return [{ ...base, ...done }];
         if (INTERRUPTED.test(b.text.trim())) return [{ ...base, kind: 'interrupt' }];
         return [{ ...base, kind: 'user', text: b.text }];
       }
@@ -128,7 +158,7 @@ function toEntries(line) {
     return content.flatMap((b) => {
       if (b.type === 'text' && b.text.trim()) return [{ ...base, kind: 'assistant', text: b.text }];
       if (b.type === 'thinking' && b.thinking?.trim()) return [{ ...base, kind: 'thinking', text: clip(b.thinking) }];
-      if (b.type === 'tool_use') return [{ ...base, kind: 'tool-use', toolUseId: b.id, name: b.name, input: b.input }];
+      if (b.type === 'tool_use') return [{ ...base, kind: 'tool-use', toolUseId: b.id, name: b.name, input: b.input, background: Boolean(b.input?.run_in_background) }];
       return [];
     });
   }
@@ -158,6 +188,7 @@ class TranscriptFollower extends EventEmitter {
     this.since = sinceMs;
     this.sessionId = sessionId || null;
     this.file = null;
+    this.agents = new Map();
     this.setEntries([]);
     this.timer = setInterval(() => this.poll(), POLL_MS);
   }
@@ -238,40 +269,47 @@ class TranscriptFollower extends EventEmitter {
     return best?.file || own?.file || null;
   }
 
+  // Reads what was appended to a file since `state.offset`, as parsed lines.
+  readLines(file, state) {
+    let chunk;
+    try {
+      const fd = fs.openSync(file, 'r');
+      const size = fs.fstatSync(fd).size;
+      chunk = Buffer.alloc(Math.max(0, size - state.offset));
+      fs.readSync(fd, chunk, 0, chunk.length, state.offset);
+      fs.closeSync(fd);
+    } catch {
+      return [];
+    }
+    if (!chunk.length) return [];
+    state.offset += chunk.length;
+    const texts = (state.partial + chunk.toString('utf8')).split('\n');
+    state.partial = texts.pop();
+    const lines = [];
+    for (const text of texts) {
+      if (!text.trim()) continue;
+      try {
+        lines.push(JSON.parse(text));
+      } catch {
+        // A line cut mid-write is completed on the next read.
+      }
+    }
+    return lines;
+  }
+
   poll() {
     const file = this.newestFile();
     if (!file) return;
     if (file !== this.file) {
       this.file = file;
-      this.offset = 0;
-      this.partial = '';
+      this.main = { offset: 0, partial: '' };
+      this.agents = new Map();
       this.setEntries([]);
       this.emit('file', this.currentSessionId);
     }
-    let chunk;
-    try {
-      const fd = fs.openSync(file, 'r');
-      const size = fs.fstatSync(fd).size;
-      chunk = Buffer.alloc(Math.max(0, size - this.offset));
-      fs.readSync(fd, chunk, 0, chunk.length, this.offset);
-      fs.closeSync(fd);
-    } catch {
-      return;
-    }
-    if (!chunk.length) return;
-    this.offset += chunk.length;
-    const lines = (this.partial + chunk.toString('utf8')).split('\n');
-    this.partial = lines.pop();
     const added = [];
     let metaChanged = false;
-    for (const text of lines) {
-      if (!text.trim()) continue;
-      let line;
-      try {
-        line = JSON.parse(text);
-      } catch {
-        continue;
-      }
+    for (const line of this.readLines(file, this.main)) {
       metaChanged = this.updateMeta(line) || metaChanged;
       for (const entry of toEntries(line)) {
         // Some commands are written twice, once as system lines and once as
@@ -283,7 +321,7 @@ class TranscriptFollower extends EventEmitter {
         } else {
           this.recentCommands = [];
         }
-        entry.id = `${line.uuid || this.offset}:${added.length}`;
+        entry.id = `${line.uuid || this.main.offset}:${added.length}`;
         if (entry.kind === 'user') {
           this.turnTokens = 0;
           this.setBusy(true);
@@ -295,11 +333,65 @@ class TranscriptFollower extends EventEmitter {
         added.push(entry);
       }
     }
+    added.push(...this.pollAgents());
     if (metaChanged) this.emit('meta', this.meta);
     if (!added.length) return;
     this.entries.push(...added);
     if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES);
     this.emit('entries', added);
+  }
+
+  // Each agent the session starts writes its own transcript in
+  // <session id>/subagents/agent-<id>.jsonl, with agent-<id>.meta.json naming
+  // the Agent tool call that started it. Its steps become `agent-step`
+  // entries, which the Chat tab draws inside that call's card.
+  pollAgents() {
+    const dir = path.join(this.dir, this.currentSessionId || '', 'subagents');
+    let names;
+    try {
+      names = fs.readdirSync(dir).filter((n) => /^agent-[\w-]+\.jsonl$/.test(n));
+    } catch {
+      return [];
+    }
+    const added = [];
+    for (const name of names) {
+      const agentId = name.slice(6, -6);
+      let state = this.agents.get(agentId);
+      if (!state) {
+        state = { offset: 0, partial: '', toolUseId: null };
+        this.agents.set(agentId, state);
+      }
+      if (!state.toolUseId) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(path.join(dir, `agent-${agentId}.meta.json`), 'utf8'));
+          state.toolUseId = meta.toolUseId || null;
+          state.agentType = meta.agentType || null;
+        } catch {
+          // Not written yet; steps still carry the agent id.
+        }
+      }
+      for (const line of this.readLines(path.join(dir, name), state)) {
+        for (const step of toEntries(line, { sidechain: true })) {
+          // The agent's first message is its prompt, already on the Agent card.
+          if (!['assistant', 'tool-use', 'tool-result', 'error'].includes(step.kind)) continue;
+          // The agent's hand-back carries its report: that is the agent's result.
+          if (step.kind === 'tool-use' && step.name === 'SubagentHandback') {
+            const report = typeof step.input?.message === 'string' ? step.input.message : '';
+            if (report) added.push({ kind: 'agent-report', at: step.at, id: `${agentId}:report:${line.uuid}`, agentId, parentToolUseId: state.toolUseId, text: clip(report) });
+            continue;
+          }
+          added.push({
+            kind: 'agent-step',
+            at: step.at,
+            id: `${agentId}:${line.uuid || state.offset}:${added.length}`,
+            agentId,
+            parentToolUseId: state.toolUseId,
+            step,
+          });
+        }
+      }
+    }
+    return added;
   }
 }
 

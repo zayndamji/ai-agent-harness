@@ -85,8 +85,9 @@ export function markdown(text) {
     const code = pre.querySelector('code');
     if (!code) continue;
     const lang = [...code.classList].find((c) => c.startsWith('language-'))?.slice(9) || '';
-    if (lang && hljs.getLanguage(lang)) hljs.highlightElement(code);
-    else if (code.textContent.length < 20_000) code.innerHTML = hljs.highlightAuto(code.textContent).value;
+    // Plain text stays plain; unlabelled blocks get a best guess.
+    if (lang && hljs.getLanguage(lang) && !/^(text|txt|plaintext|plain)$/.test(lang)) hljs.highlightElement(code);
+    else if (!lang && code.textContent.length < 20_000) code.innerHTML = hljs.highlightAuto(code.textContent).value;
     const box = el('div', 'code');
     const head = el('div', 'code-head');
     const copy = el('button', '', 'Copy');
@@ -139,7 +140,11 @@ function todoList(todos) {
 }
 
 export class ChatView {
-  constructor({ list, scroll, empty, jump, tasks, onTerminal, onTurnEnd }) {
+  constructor({ list, scroll, empty, jump, tasks, background, onTerminal, onTurnEnd }) {
+    this.background = background;
+    this.jobs = new Map();
+    this.agentCards = new Map();
+    this.waitingSteps = new Map();
     this.list = list;
     this.scroll = scroll;
     this.empty = empty;
@@ -161,6 +166,10 @@ export class ChatView {
     this.pending = [];
     this.tasks.hidden = true;
     this.tasks.replaceChildren();
+    this.jobs.clear();
+    this.agentCards.clear();
+    this.waitingSteps.clear();
+    this.jobsChanged();
   }
 
   // A message sent from this page shows at once, faded, until the transcript
@@ -258,10 +267,22 @@ export class ChatView {
     chev.classList.add('chev');
     const iconNode = icon(TOOL_ICONS[entry.name] || 'tool');
     iconNode.classList.add('tool-icon');
-    summary.append(iconNode, el('span', 'tool-name', entry.name), el('span', 'tool-summary', toolSummary(entry.name, entry.input)), state, chev);
-    const body = el('div', 'tool-body');
     const input = entry.input || {};
-    if (entry.name === 'Bash' && input.command) {
+    const isAgent = entry.name === 'Agent' || entry.name === 'Task';
+    summary.append(iconNode, el('span', 'tool-name', entry.name));
+    if (isAgent && input.subagent_type) summary.append(el('span', 'badge', input.subagent_type));
+    if (entry.background) summary.append(el('span', 'badge bg', 'background'));
+    summary.append(el('span', 'tool-summary', toolSummary(entry.name, input)), state, chev);
+    const body = el('div', 'tool-body');
+    let steps = null;
+    let now = null;
+    if (isAgent) {
+      body.append(el('div', 'tool-label', 'Task'), el('pre', 'agent-prompt', input.prompt || input.description || ''));
+      steps = el('div', 'agent-steps');
+      body.append(el('div', 'tool-label', 'Steps'), steps);
+      // The latest step shows under the header while the card is closed.
+      now = el('div', 'agent-now muted', 'Starting…');
+    } else if (entry.name === 'Bash' && input.command) {
       body.append(el('div', 'tool-label', 'Command'), el('pre', 'cmd', input.command));
     } else if (entry.name === 'TodoWrite' && Array.isArray(input.todos)) {
       body.append(todoList(input.todos));
@@ -273,7 +294,155 @@ export class ChatView {
     }
     details.append(summary, body);
     node.append(details);
-    this.tools.set(entry.toolUseId, { node, details, body, state, name: entry.name });
+    if (now) node.append(now);
+    const card = { key: entry.toolUseId, node, details, body, state, name: entry.name, input, isAgent, steps, now, stepTools: new Map() };
+    this.tools.set(entry.toolUseId, card);
+    // Agents are jobs from the start; commands only when run in the background.
+    if (isAgent) {
+      this.job(entry.toolUseId, card, { kind: 'agent', title: input.description || 'Agent', agentType: input.subagent_type || null, prompt: input.prompt || '', startedAt: entry.at, background: Boolean(input.run_in_background) });
+    } else if (entry.background) {
+      this.job(entry.toolUseId, card, { kind: 'command', title: input.description || input.command || 'Command', command: input.command || '', startedAt: entry.at, background: true });
+    }
+    for (const step of this.waitingSteps.get(entry.toolUseId) || []) this.addStep(card, step);
+    this.waitingSteps.delete(entry.toolUseId);
+    return node;
+  }
+
+  // ---- Background commands and agents ("jobs")
+  //
+  // Every agent, and every command run in the background, is a job: what it
+  // is, whether it is still running, its steps (agents), its report or
+  // summary. The jobs panel and the "Running" strip read `this.jobs`.
+
+  job(key, card, fields) {
+    let job = this.jobs.get(key);
+    if (!job) {
+      job = { key, card, status: 'running', steps: [], stepIndex: new Map(), report: null, summary: null, startedAt: null, finishedAt: null };
+      this.jobs.set(key, job);
+    }
+    Object.assign(job, fields);
+    this.jobsChanged();
+    return job;
+  }
+
+  jobsChanged() {
+    if (this.jobsQueued) return;
+    this.jobsQueued = true;
+    queueMicrotask(() => {
+      this.jobsQueued = false;
+      this.renderBackground();
+      this.onJobs?.();
+    });
+  }
+
+  finishJob(key, status, fields = {}) {
+    const job = this.jobs.get(key);
+    if (job) this.job(key, job.card, { status, ...fields });
+  }
+
+  renderBackground() {
+    const items = [...this.jobs.values()].filter((j) => j.status === 'running');
+    this.background.hidden = !items.length;
+    if (!items.length) return this.background.replaceChildren();
+    const head = el('span', 'bg-head', `Running · ${items.length}`);
+    const list = items.map((job) => {
+      const item = el('button', 'bg-item');
+      item.type = 'button';
+      item.append(el('span', 'spinner'), el('span', 'bg-label', `${job.kind === 'agent' ? 'Agent' : 'Bash'} · ${job.title}`));
+      item.title = 'Open it in the Background panel';
+      item.addEventListener('click', () => this.onOpenJob?.(job.key));
+      return item;
+    });
+    this.background.replaceChildren(head, ...list);
+  }
+
+  setRunning(card, text) {
+    card.node.dataset.state = 'running';
+    card.state.replaceChildren(el('span', 'spinner'), el('span', '', text));
+  }
+
+  // One step of an agent: a compact tool row, or a line of its text.
+  addStep(card, entry) {
+    if (entry.kind === 'agent-report') return this.setReport(card, entry.text);
+    const step = entry.step;
+    const job = this.jobs.get(card.key);
+    if (step.kind === 'tool-use') {
+      const row = el('div', 'agent-step');
+      const mark = el('span', 'step-state');
+      mark.append(el('span', 'spinner'));
+      row.append(mark, el('span', 'step-name', step.name), el('span', 'step-summary', toolSummary(step.name, step.input)));
+      card.steps.append(row);
+      card.stepTools.set(step.toolUseId, { row, mark });
+      card.now.textContent = `${step.name} · ${toolSummary(step.name, step.input)}`;
+      if (job) {
+        job.stepIndex.set(step.toolUseId, job.steps.length);
+        job.steps.push({ type: 'tool', name: step.name, summary: toolSummary(step.name, step.input), state: 'running', at: entry.at });
+      }
+    } else if (step.kind === 'tool-result') {
+      const tool = card.stepTools.get(step.toolUseId);
+      if (tool) {
+        tool.row.dataset.state = step.isError ? 'error' : 'done';
+        tool.mark.replaceChildren(icon(step.isError ? 'x' : 'check'));
+      }
+      const i = job?.stepIndex.get(step.toolUseId);
+      if (i !== undefined) {
+        job.steps[i].state = step.isError ? 'error' : 'done';
+        job.steps[i].output = step.text ? step.text.slice(0, 2000) : '';
+      }
+    } else if (step.kind === 'assistant') {
+      card.steps.append(el('div', 'agent-text', step.text.length > 400 ? `${step.text.slice(0, 400)}…` : step.text));
+      card.now.textContent = step.text.replace(/\s+/g, ' ').slice(0, 140);
+      job?.steps.push({ type: 'text', text: step.text, at: entry.at });
+    } else if (step.kind === 'error') {
+      card.steps.append(el('div', 'agent-text error', step.text));
+      job?.steps.push({ type: 'error', text: step.text, at: entry.at });
+    }
+    if (job) this.jobsChanged();
+  }
+
+  // The agent's own report, from its hand-back.
+  setReport(card, text) {
+    card.report = text;
+    card.resultBox?.remove();
+    card.previewBox?.remove();
+    card.resultBox = el('div', 'agent-result');
+    card.resultBox.append(el('div', 'tool-label', 'Report'), markdown(text));
+    card.body.append(card.resultBox);
+    card.previewBox = el('div', 'tool-preview', firstLines(text));
+    card.node.append(card.previewBox);
+    if (card.now) card.now.textContent = 'Reporting back';
+    if (this.jobs.has(card.key)) this.job(card.key, card, { report: text });
+  }
+
+  // A background command or agent finished: update its card, and say so.
+  taskDone(entry) {
+    const card = this.tools.get(entry.toolUseId);
+    const failed = /fail|error|kill/i.test(entry.status);
+    if (card) {
+      card.node.dataset.state = failed ? 'error' : 'done';
+      card.state.replaceChildren(icon(failed ? 'x' : 'check'), el('span', '', entry.status || 'done'));
+      if (card.now) card.now.remove();
+      // An agent's notice only points at the report, which the card already shows.
+      const result = entry.result && !/^This agent's report was delivered/.test(entry.result) ? entry.result : null;
+      if (card.report) {
+        // Nothing to add.
+      } else if (result) {
+        card.body.append(el('div', 'tool-label', 'Result'), markdown(result));
+        card.node.append(el('div', 'tool-preview', firstLines(result)));
+      } else if (entry.summary) {
+        card.body.append(el('div', 'tool-label', 'Finished'), el('pre', '', entry.summary));
+      }
+      const job = this.jobs.get(entry.toolUseId);
+      this.finishJob(entry.toolUseId, failed ? 'error' : 'done', {
+        summary: entry.summary,
+        finishedAt: entry.at,
+        taskId: entry.taskId || job?.taskId,
+        report: job?.report || result,
+        usage: entry.usage,
+      });
+    }
+    const node = el('div', failed ? 'event warn' : 'event');
+    node.append(icon(failed ? 'x' : 'check'), el('span', '', entry.summary || `Background task ${entry.status || 'finished'}`));
     return node;
   }
 
@@ -314,8 +483,44 @@ export class ChatView {
       card.node.classList.add('answered');
       return;
     }
-    const { node, details, body, state, name } = card;
-    const detail = entry.detail || {};
+    const { node, details, body, state, name, input } = card;
+    const detail = { ...(entry.detail || {}) };
+    if (detail.agentId) {
+      this.agentCards.set(detail.agentId, card);
+      for (const step of this.waitingSteps.get(detail.agentId) || []) this.addStep(card, step);
+      this.waitingSteps.delete(detail.agentId);
+    }
+    if (card.isAgent && detail.isAsync && !entry.isError) {
+      // Started in the background; its task notification finishes the card.
+      this.setRunning(card, 'background');
+      this.job(entry.toolUseId, card, { background: true, agentId: detail.agentId, model: detail.model || null });
+      return;
+    }
+    if (detail.backgroundTaskId && !entry.isError) {
+      this.setRunning(card, 'background');
+      this.job(entry.toolUseId, card, { kind: 'command', title: input?.description || input?.command || 'Command', command: input?.command || '', taskId: detail.backgroundTaskId, background: true });
+      return;
+    }
+    if (card.isAgent) {
+      // A foreground agent returns its answer as the tool result.
+      const failed = entry.isError;
+      const answer = entry.text && !/^This agent's report was delivered/.test(entry.text) ? entry.text : null;
+      this.finishJob(entry.toolUseId, failed ? 'error' : 'done', { finishedAt: entry.at, report: card.report || answer, agentId: detail.agentId, model: detail.model || null });
+      node.dataset.state = failed ? 'error' : 'done';
+      state.replaceChildren(icon(failed ? 'x' : 'check'));
+      if (card.now) card.now.remove();
+      if (entry.text && !card.report && !/^This agent's report was delivered/.test(entry.text)) {
+        body.append(el('div', 'tool-label', failed ? 'Error' : 'Result'), markdown(entry.text));
+        node.append(el('div', 'tool-preview', firstLines(entry.text)));
+      }
+      return;
+    }
+    // A Write that creates a file has no diff; show its content as added lines.
+    if (!detail.patch?.length && name === 'Write' && typeof input?.content === 'string' && !entry.isError) {
+      const lines = input.content.replace(/\n$/, '').split('\n');
+      detail.patch = [{ oldStart: 0, newStart: 1, lines: lines.slice(0, 400).map((l) => `+${l}`) }];
+      detail.truncated = lines.length > 400;
+    }
     const failed = entry.isError || detail.interrupted;
     node.dataset.state = failed ? 'error' : 'done';
     state.replaceChildren(icon(failed ? 'x' : 'check'));
@@ -385,6 +590,29 @@ export class ChatView {
         const node = el('div', 'tool');
         node.append(el('pre', 'tool-preview', clipChars(entry.text || '(no output)')));
         return node;
+      }
+      case 'task-done':
+        return this.taskDone(entry);
+      case 'agent-report': {
+        const card = this.tools.get(entry.parentToolUseId) || this.agentCards.get(entry.agentId);
+        if (card?.isAgent) this.setReport(card, entry.text);
+        else {
+          const key = entry.parentToolUseId || entry.agentId;
+          if (!this.waitingSteps.has(key)) this.waitingSteps.set(key, []);
+          this.waitingSteps.get(key).push(entry);
+        }
+        return null;
+      }
+      case 'agent-step': {
+        const card = this.tools.get(entry.parentToolUseId) || this.agentCards.get(entry.agentId);
+        if (card?.isAgent) this.addStep(card, entry);
+        else {
+          // The Agent card isn't drawn yet; keep the step for it.
+          const key = entry.parentToolUseId || entry.agentId;
+          if (!this.waitingSteps.has(key)) this.waitingSteps.set(key, []);
+          this.waitingSteps.get(key).push(entry);
+        }
+        return null;
       }
       case 'command':
         return el('div', 'command', entry.text);

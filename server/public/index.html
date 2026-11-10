@@ -50,11 +50,17 @@
           <div class="session-title" id="session-title">New session</div>
           <div class="session-meta" id="session-chips"></div>
         </div>
+        <button id="jobs-toggle" type="button" class="ghost small jobs-toggle" title="Background commands and agents" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+          <span>Background</span>
+          <span id="jobs-count" class="jobs-count"></span>
+        </button>
         <button id="notify" type="button" class="ghost icon-only small" title="Notify me when Claude finishes" aria-pressed="false">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
         </button>
       </div>
       <div id="tasks" class="tasks" hidden></div>
+      <div id="background" class="background" hidden></div>
 
       <div id="chat-scroll" class="chat-scroll">
         <div id="chat-list" class="chat-list">
@@ -71,9 +77,13 @@
       </button>
 
       <div id="dialog-banner" class="banner" hidden>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-        <div><strong>Claude is waiting for your answer.</strong> <span id="dialog-text"></span></div>
-        <button id="dialog-open" type="button" class="small">Open Terminal</button>
+        <div class="banner-head">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          <div class="banner-text"><strong>Claude is waiting for your answer</strong><span id="dialog-text"></span></div>
+          <button id="dialog-open" type="button" class="ghost small">Open Terminal</button>
+        </div>
+        <div id="dialog-options" class="dialog-options"></div>
+        <div id="dialog-error" class="dialog-error" hidden></div>
       </div>
 
       <div id="chat-busy" class="working" hidden>
@@ -84,6 +94,7 @@
         </div>
         <button id="interrupt" type="button" class="ghost small" title="Interrupt (Esc)">Interrupt</button>
       </div>
+      <aside id="jobs-panel" class="jobs-panel" hidden aria-label="Background commands and agents"></aside>
     </section>
 
     <section id="view-terminal" class="view terminal-view" role="tabpanel" aria-labelledby="tab-terminal">

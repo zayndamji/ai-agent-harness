@@ -3,6 +3,7 @@
 // running `claude`, and a WebSocket that streams it to xterm.js in the browser.
 
 const crypto = require('node:crypto');
+const os = require('node:os');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -38,6 +39,8 @@ const FILES = {
   '/chat.js': { file: path.join(PUBLIC, 'chat.js'), type: 'text/javascript', auth: true },
   '/files.js': { file: path.join(PUBLIC, 'files.js'), type: 'text/javascript', auth: true },
   '/sessions.js': { file: path.join(PUBLIC, 'sessions.js'), type: 'text/javascript', auth: true },
+  '/dialog.js': { file: path.join(PUBLIC, 'dialog.js'), type: 'text/javascript', auth: true },
+  '/jobs.js': { file: path.join(PUBLIC, 'jobs.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
@@ -156,6 +159,51 @@ function handleLogout(req, res) {
 const FILE_APIS = new Set(['/api/files', '/api/file', '/api/archive', '/api/sessions']);
 const json = (res, status, body) => send(res, status, { 'Content-Type': 'application/json' }, JSON.stringify(body));
 
+// GET /api/task-output?task=<id>: the live output of a background command in
+// the running session. Claude Code writes it to
+// <tmp>/claude-<uid>/<project>/<session id>/tasks/<task id>.output; only the
+// current session's folder is searched.
+const TASK_OUTPUT_MAX = 64 * 1024;
+const ANSI_CODES = /\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+function taskOutput(res, taskId) {
+  const sessionId = session.running ? transcript.currentSessionId : null;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(taskId || '') || !sessionId) return json(res, 404, { error: 'no such task' });
+  const tmp = os.tmpdir();
+  let roots = [];
+  try {
+    roots = fs.readdirSync(tmp).filter((n) => /^claude-\d+$/.test(n));
+  } catch {
+    // No temp folders yet.
+  }
+  for (const root of roots) {
+    let projects = [];
+    try {
+      projects = fs.readdirSync(path.join(tmp, root));
+    } catch {
+      continue;
+    }
+    for (const project of projects) {
+      const file = path.join(tmp, root, project, sessionId, 'tasks', `${taskId}.output`);
+      let fd;
+      try {
+        fd = fs.openSync(file, 'r');
+      } catch {
+        continue;
+      }
+      try {
+        const { size } = fs.fstatSync(fd);
+        const len = Math.min(size, TASK_OUTPUT_MAX);
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, size - len);
+        return json(res, 200, { output: buf.toString('utf8').replace(ANSI_CODES, ''), size, truncated: size > len });
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  }
+  json(res, 404, { error: 'no output yet' });
+}
+
 // POST /api/folders {path, name}: a new folder inside a workspace folder.
 async function handleMkdir(req, res) {
   if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
@@ -181,6 +229,10 @@ const server = http.createServer((req, res) => {
     return files.handle(req, res, pathname, searchParams, send);
   }
   if (req.method === 'POST' && pathname === '/api/folders') return void handleMkdir(req, res);
+  if (req.method === 'GET' && pathname === '/api/task-output') {
+    if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
+    return taskOutput(res, searchParams.get('task'));
+  }
   if (req.method === 'POST' && pathname === '/login') return void handleLogin(req, res);
   if (req.method === 'POST' && pathname === '/logout') return handleLogout(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, {}, 'Method not allowed');
@@ -301,6 +353,46 @@ session.on('exit', ({ exitCode, signal }) => {
 });
 
 const size = (n) => Number.isInteger(n) && n >= 2 && n <= 1000;
+
+// answer {question, option, text?}: picks a choice in the dialog on screen, the
+// way a person would: arrow keys from the highlighted choice to the chosen
+// one, then Enter. For "Type something." the text is typed before Enter. The
+// screen is read again first, and nothing is sent unless it still shows the
+// same question with that choice.
+let answering = false;
+function answerDialog(client, msg) {
+  const fail = (message) => client.send(JSON.stringify({ type: 'answer-failed', message }));
+  if (!session.running) return fail('No session is running.');
+  if (answering) return fail('Still sending the last answer.');
+  session.withScreen((mirror) => {
+    const dialog = readStatus(mirror).dialog;
+    if (!dialog || !dialog.answerable) return fail('That question is no longer on screen. Answer it in the Terminal tab.');
+    if (dialog.question !== msg.question) return fail('The question on screen changed. Check the Terminal tab.');
+    const option = dialog.options.find((o) => o.n === msg.option);
+    if (!option) return fail('That choice is no longer on screen.');
+    const text = typeof msg.text === 'string' ? msg.text.replace(/[\r\n]+/g, ' ').trim() : '';
+    if (option.n === dialog.freeText && !text) return fail('Type an answer first.');
+    // Arrow keys depend on the terminal's cursor key mode.
+    const app = mirror.modes.applicationCursorKeysMode;
+    const down = app ? '\x1bOB' : '\x1b[B';
+    const up = app ? '\x1bOA' : '\x1b[A';
+    const delta = option.n - dialog.selected;
+    const keys = Array(Math.abs(delta)).fill(delta > 0 ? down : up);
+    if (option.n === dialog.freeText) keys.push(text);
+    keys.push('\r');
+    answering = true;
+    const sendNext = () => {
+      if (!keys.length || !session.running) {
+        answering = false;
+        return;
+      }
+      session.write(keys.shift());
+      setTimeout(sendNext, 60);
+    };
+    sendNext();
+    console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);
+  });
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 // start {cols, rows, folder?, resume?}: folder is relative to the workspace;
@@ -357,6 +449,9 @@ function handleMessage(client, raw) {
       return;
     case 'input':
       if (typeof msg.data === 'string') session.write(msg.data);
+      return;
+    case 'answer':
+      answerDialog(client, msg);
       return;
     case 'resize':
       if (size(msg.cols) && size(msg.rows)) session.resize(msg.cols, msg.rows);

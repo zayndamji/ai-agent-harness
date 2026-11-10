@@ -2,6 +2,7 @@
 // a file or a whole folder.
 import hljs from '/vendor/highlight.mjs';
 import { icon } from '/chat.js';
+import { ask, notice } from '/dialog.js';
 
 const TEXT_PREVIEW_MAX = 2 * 1024 * 1024;
 const IMAGES = /\.(png|jpe?g|gif|webp)$/i;
@@ -162,7 +163,7 @@ export class FilesView {
   }
 
   async mkdir() {
-    const name = prompt(`New folder in ${this.label}:`);
+    const name = await ask('New folder', { message: `In ${this.label}`, placeholder: 'Folder name' });
     if (!name) return;
     const res = await fetch('/api/folders', {
       method: 'POST',
@@ -170,7 +171,7 @@ export class FilesView {
       body: JSON.stringify({ path: this.dir, name }),
     }).catch(() => null);
     const data = await res?.json().catch(() => ({}));
-    if (!res?.ok) return alert(data?.error || 'Could not make the folder.');
+    if (!res?.ok) return notice('Could not make the folder', data?.error || 'Something went wrong.');
     this.closePreview();
     this.load(data.path);
   }

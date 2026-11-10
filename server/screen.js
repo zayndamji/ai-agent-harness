@@ -69,12 +69,91 @@ function readStatus(term) {
     break;
   }
 
-  const dialogAt = lines.findIndex(({ text }) => DIALOG.test(text));
-  if (dialogAt >= 0) {
-    const question = lines.slice(0, dialogAt + 1).reverse().find(({ text }) => /\?\s*$/.test(text));
-    status.dialog = (question ? question.text : lines[dialogAt].text).trim().slice(0, 200);
-  }
+  status.dialog = readDialog(lines);
   return status;
+}
+
+// "❯ 1. main.py", "  2. utils.py": numbered choices, the ❯ marking the
+// highlighted one. A line indented under a choice is its description.
+const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s+(.*\S)\s*$/;
+const CHECKBOX = /^(\[[ xX✓✔]\]|[☐☑☒□■✓✔])\s/;
+const LOOKBACK = 40;
+
+// The question is the block of text right above the choices: one or more
+// wrapped screen lines, sometimes inside a box drawn with │. Long questions
+// come with context, so the last sentence ending in "?" is the question.
+function readQuestion(above) {
+  const parts = [];
+  for (let i = above.length - 1; i >= 0 && parts.length < 20; i--) {
+    const text = above[i].text.replace(/^[\s│┃|╭╰╮╯]+|[\s│┃|╭╰╮╯]+$/g, '');
+    if (!text) {
+      if (parts.length) break;
+      continue;
+    }
+    if (RULE.test(above[i].text) || /^[☐☑□■✔←→]/.test(text)) break;
+    parts.unshift(text);
+  }
+  const block = parts.join(' ').replace(/\s+/g, ' ').trim();
+  if (!block) return '';
+  const end = block.lastIndexOf('?');
+  if (end < 0) return block.slice(-300);
+  // Back to the start of that sentence: after ". " or "? " before a capital.
+  let start = 0;
+  const boundary = /[.!?]\s+(?=[A-Z(])/g;
+  for (let m; (m = boundary.exec(block)) && m.index < end; ) start = m.index + m[0].length;
+  return block.slice(start, end + 1).slice(-300);
+}
+
+// A dialog waiting for an answer: a question (permission prompt,
+// AskUserQuestion, a picker) with numbered choices, or just a footer like
+// "Esc to cancel". Choices can be answered from the Chat tab when the
+// highlighted one is known and it's a single choice, not a checklist.
+function readDialog(lines) {
+  let footer = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (DIALOG.test(lines[i].text)) {
+      footer = i;
+      break;
+    }
+  }
+  if (footer < 0) return null;
+  const from = Math.max(0, footer - LOOKBACK);
+  const options = [];
+  let selected = null;
+  let firstOption = -1;
+  for (let i = from; i <= footer; i++) {
+    const text = lines[i].text;
+    const m = OPTION.exec(text);
+    if (m) {
+      const n = Number(m[3]);
+      // A new list starting at 1 replaces anything seen above it.
+      if (n === 1) {
+        options.length = 0;
+        selected = null;
+        firstOption = i;
+      }
+      if (options.length && n !== options[options.length - 1].n + 1) continue;
+      options.push({ n, label: m[4], description: '', indent: m[1].length + (m[2] ? m[2].length : 0) });
+      if (m[2]) selected = n;
+      continue;
+    }
+    const last = options[options.length - 1];
+    if (last && text.trim() && !RULE.test(text) && !DIALOG.test(text)) {
+      const indent = text.length - text.trimStart().length;
+      if (indent > last.indent && !last.description) last.description = text.trim();
+    }
+  }
+  const question = readQuestion(firstOption >= 0 ? lines.slice(from, firstOption) : lines.slice(from, footer)) || lines[footer].text.trim();
+  const multi = options.some((o) => CHECKBOX.test(o.label));
+  const clean = options.map(({ n, label, description }) => ({ n, label, description }));
+  return {
+    question,
+    options: clean,
+    selected,
+    // "Type something." turns into a text box when chosen.
+    freeText: clean.find((o) => /^type something\.?$/i.test(o.label))?.n || null,
+    answerable: clean.length > 0 && selected !== null && !multi,
+  };
 }
 
 module.exports = { readStatus };

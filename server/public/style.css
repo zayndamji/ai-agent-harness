@@ -579,21 +579,66 @@ pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 
 .jump:hover { background: var(--bg-sunken); }
 
 .banner {
+  width: min(780px, calc(100% - 32px));
+  margin: 0 auto 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg-raised));
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-size: 13px;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.banner-head { display: flex; align-items: center; gap: 10px; }
+.banner-head > svg { color: var(--warn); }
+.banner-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.banner-text strong { font-size: 12px; font-weight: 600; color: var(--warn); }
+.banner-text span { font-size: 14px; font-weight: 600; color: var(--text); }
+.dialog-options { display: grid; gap: 6px; margin-top: 10px; }
+.dialog-options:empty { display: none; }
+.dialog-option {
   display: flex;
   align-items: center;
   gap: 10px;
-  width: min(780px, calc(100% - 32px));
-  margin: 0 auto 10px;
-  padding: 9px 12px;
-  border-radius: var(--radius);
-  border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--border));
-  background: color-mix(in srgb, var(--warn) 10%, var(--bg-raised));
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-raised);
   color: var(--text);
-  font-size: 13px;
+  font: 400 13.5px/1.35 var(--sans);
+  text-align: left;
 }
-.banner svg { color: var(--warn); }
-.banner > div { flex: 1; min-width: 0; }
-.banner span { color: var(--text-2); }
+button.dialog-option:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.dialog-option:disabled { opacity: 0.55; }
+.dialog-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  color: var(--muted);
+  font: 600 12px var(--mono);
+}
+.dialog-label { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.dialog-desc { color: var(--muted); font-size: 12px; }
+.dialog-input {
+  flex: 2;
+  min-width: 0;
+  font: inherit;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+}
+.dialog-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.dialog-error { margin-top: 8px; font-size: 12.5px; color: var(--danger); }
+.dialog-error.quiet { color: var(--muted); }
 
 .working {
   display: flex;
@@ -892,6 +937,7 @@ body.files-open .idle, body.files-open .composer-wrap { display: none; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
 .composer textarea {
   flex: 1;
+  overflow-y: hidden;
   resize: none;
   max-height: 200px;
   padding: 7px 0;
@@ -904,3 +950,182 @@ body.files-open .idle, body.files-open .composer-wrap { display: none; }
 .send { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
 .composer-hint { max-width: 780px; margin: 6px auto 0; font-size: 11px; text-align: center; }
 @media (max-width: 640px) { .composer-hint { display: none; } }
+
+/* In-page dialogs (dialog.js) */
+
+.modal {
+  width: min(400px, calc(100% - 32px));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-raised);
+  color: var(--text);
+  box-shadow: 0 10px 40px rgb(0 0 0 / 0.35);
+}
+.modal::backdrop { background: rgb(0 0 0 / 0.45); backdrop-filter: blur(2px); }
+.modal-body { display: grid; gap: 12px; padding: 20px; margin: 0; }
+.modal-title { margin: 0; font-size: 16px; font-weight: 600; }
+.modal-text { margin: 0; color: var(--text-2); }
+.modal-input {
+  font: inherit;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+.modal-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+button.danger { background: var(--danger); color: #fff; }
+button.danger:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
+
+/* Background commands and agents */
+
+.background {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+.background::-webkit-scrollbar { display: none; }
+.bg-head { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.bg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 280px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--text-2);
+  font: 400 12px var(--sans);
+}
+.bg-item:hover { background: var(--bg-sunken); color: var(--text); }
+.bg-item .spinner { width: 11px; height: 11px; border-width: 2px; }
+.bg-label { overflow: hidden; text-overflow: ellipsis; }
+.badge.bg { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.tool[data-state="running"] .tool-state { color: var(--accent); }
+
+.agent-now {
+  margin: -2px 12px 10px 37px;
+  font-size: 12.5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tool:has(> details[open]) > .agent-now { display: none; }
+.agent-prompt { max-height: 160px; overflow: auto; padding: 8px 10px; border-radius: 6px; background: var(--bg-sunken); }
+.agent-steps {
+  display: grid;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+.agent-steps:empty::before { content: "No steps yet"; color: var(--muted); font-size: 12px; }
+.agent-step { display: flex; align-items: center; gap: 8px; font-size: 12.5px; min-width: 0; }
+.step-state { flex: none; display: inline-flex; width: 14px; color: var(--muted); }
+.step-state .spinner { width: 11px; height: 11px; border-width: 2px; }
+.agent-step[data-state="done"] .step-state { color: var(--ok); }
+.agent-step[data-state="error"] .step-state { color: var(--danger); }
+.step-name { font-weight: 600; }
+.step-summary { color: var(--text-2); font-family: var(--mono); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+.agent-text { font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
+.agent-text.error { color: var(--danger); }
+.event.warn { color: var(--danger); }
+
+/* Background panel (jobs.js): docked beside the chat on wide screens, over it on narrow ones */
+
+.jobs-toggle { gap: 6px; }
+.jobs-toggle span:not(.jobs-count) { font-size: 12px; }
+.jobs-count:empty { display: none; }
+.jobs-count {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-2);
+  font: 600 11px/1.4 var(--sans);
+  text-align: center;
+}
+.jobs-count.live { background: var(--accent); color: var(--accent-text); }
+@media (max-width: 640px) { .jobs-toggle span:not(.jobs-count) { display: none; } }
+
+.jobs-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(400px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  box-shadow: -8px 0 30px rgb(0 0 0 / 0.25);
+}
+@media (min-width: 1000px) {
+  body.jobs-open .chat-view { padding-right: 400px; }
+  body.jobs-open[data-view="chat"] .composer-wrap { padding-right: 416px; }
+  .jobs-panel { box-shadow: none; }
+}
+.jobs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.jobs-title { flex: 1; font-weight: 600; }
+.jobs-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 10px; }
+.jobs-empty { padding: 30px 16px; text-align: center; color: var(--muted); }
+.jobs-empty p { margin: 0 0 6px; }
+.jobs-empty-title { color: var(--text); font-weight: 600; }
+.jobs-list { display: grid; gap: 4px; }
+.job-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+}
+.job-row:hover { background: var(--bg-sunken); }
+.job-mark { flex: none; display: inline-flex; width: 16px; padding-top: 2px; color: var(--ok); }
+.job-row[data-state="error"] .job-mark { color: var(--danger); }
+.job-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.job-name { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13.5px; min-width: 0; }
+.job-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-name svg { color: var(--muted); width: 14px; height: 14px; }
+.job-meta { font-size: 12px; color: var(--muted); }
+.job-meta.running { color: var(--accent); }
+.job-meta.error { color: var(--danger); }
+
+.job-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.job-detail-head { display: grid; gap: 4px; justify-items: start; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.job-detail-title { font-weight: 600; font-size: 15px; }
+.job-detail-head .ghost { margin-top: 4px; }
+.job-pre { padding: 8px 10px; border-radius: 6px; background: var(--bg-sunken); max-height: 300px; overflow: auto; }
+.job-output { max-height: 420px; }
+.job-summary { margin: 0; font-size: 13px; color: var(--text-2); }
+.job-task summary { cursor: pointer; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.job-task .job-pre { margin-top: 6px; }
+.job-steps { display: grid; gap: 4px; padding-left: 10px; border-left: 2px solid var(--border); }
+.job-step summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-size: 12.5px; min-width: 0; }
+.job-step summary::-webkit-details-marker { display: none; }
+.job-step[data-state="done"] .step-state { color: var(--ok); }
+.job-step[data-state="error"] .step-state { color: var(--danger); }
+.job-step .job-pre { margin: 4px 0 4px 22px; font-size: 11.5px; }
+.job-text-step { font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
+.job-text-step.error { color: var(--danger); }
+.job-report { font-size: 14px; overflow-wrap: anywhere; min-width: 0; }
