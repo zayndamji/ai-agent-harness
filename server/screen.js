@@ -8,6 +8,8 @@
 const SPINNER = /^\s*\S\s+([A-Z][\w'-]*(?: [\w'-]+)*…)\s*(?:\((.*)\))?\s*$/;
 // "⎿ Tip: Did you know you can drag and drop image files into your terminal?"
 const BRANCH = /^\s*[⎿└]\s+(.*\S)\s*$/;
+// Tree and tool-call lines, which are never the spinner.
+const TREE = /^\s*[⎿│├└●⏺]/;
 const RULE = /^\s*─{8,}\s*$/;
 const INPUT = /^\s*❯\s?(.*?)\s*$/;
 const EFFORT = /\b(low|medium|high|xhigh|max)\s*·\s*\/effort/;
@@ -45,12 +47,15 @@ function readStatus(term) {
   const status = { spinner: null, detail: null, tip: null, mode: null, effort: null, suggestion: null, dialog: null, working: false };
 
   lines.forEach(({ text }, i) => {
-    const spin = SPINNER.exec(text);
-    if (spin && !status.spinner) {
+    // Agents and tool calls above it draw spinner-like lines too
+    // ("⎿ Initializing…", "● Running 2 agents…"). Claude Code's own spinner
+    // is the lowest one, just above the input box.
+    const spin = !TREE.test(text) && SPINNER.exec(text);
+    if (spin) {
       status.spinner = spin[1];
       status.detail = spin[2] ? spin[2].replace(/\s*·\s*esc to interrupt\s*$/, '') : null;
       const next = lines[i + 1] && BRANCH.exec(lines[i + 1].text);
-      if (next && /^Tip:/.test(next[1])) status.tip = next[1].replace(/^Tip:\s*/, '');
+      status.tip = next && /^Tip:/.test(next[1]) ? next[1].replace(/^Tip:\s*/, '') : null;
     }
     if (/shift\+tab to cycle/.test(text)) {
       status.mode = text.replace(/\(shift\+tab to cycle\).*/, '').replace(/^[\s⏵▸►»>]+/, '').trim() || null;
