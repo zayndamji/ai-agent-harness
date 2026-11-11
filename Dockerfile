@@ -52,8 +52,8 @@ WORKDIR /opt/harness
 COPY server/ ./
 
 # Updates come from rebuilding the image, not from the running container.
-# Tools you install yourself in the container (npm install -g, pip install
-# --user, binaries in ~/.local/bin) go in the home folder, so they're kept.
+# Tools you install yourself in the container (npm install -g, binaries in
+# ~/.local/bin) go in the home folder, so they're kept.
 # A UTF-8 locale, as a terminal on a Mac or a Linux desktop sets.
 ENV DISABLE_AUTOUPDATER=1 \
     LANG=C.UTF-8 \

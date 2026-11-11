@@ -4,7 +4,7 @@ You are running inside a Docker container that a person uses to run Claude Code.
 
 - You are the user `node`, with no root and no sudo. `apt-get install`, and anything else that writes to `/usr`, `/etc` or `/opt`, fails. Don't try to get around that.
 - The only host folder you can see is `/workspace`. Your home folder, `/home/node`, is kept between restarts.
-- Some installs work without root, and are kept in the home folder: `npm install -g` (it installs into `~/.local`), programs placed in `~/.local/bin` (on `PATH`), and Python packages in a virtual environment (`python3 -m venv`), if Python is installed.
+- Some installs work without root, and are kept in the home folder: `npm install -g` (it installs into `~/.local`), programs placed in `~/.local/bin` (on `PATH`), and Python packages in a virtual environment (`python3 -m venv`), if Python is installed. `pip install --user` fails, because Debian marks its Python as externally managed.
 
 The system tools come from the person's `addons.conf`, a file in the harness checkout on the host, outside this container. You can't see or edit it. Each line names an installer and then packages separated by spaces:
 
