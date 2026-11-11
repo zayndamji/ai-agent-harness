@@ -19,6 +19,19 @@ FROM node:24-trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
+# The Browser tab: Google Chrome (for Claude Code's Claude in Chrome) on a
+# virtual display, shared over VNC on localhost. The server starts all three
+# (browser.js) and passes the VNC connection to the page behind the login.
+# Google ships Chrome for amd64 and arm64 Linux from the same repository.
+ADD https://dl.google.com/linux/linux_signing_key.pub /usr/share/keyrings/google-chrome.asc
+RUN chmod 644 /usr/share/keyrings/google-chrome.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/google-chrome.asc] https://dl.google.com/linux/chrome/deb/ stable main" \
+        > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        google-chrome-stable xvfb x11vnc \
+        fonts-dejavu-core fonts-liberation fonts-noto-core fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pin with --build-arg CLAUDE_CODE_VERSION=2.1.296; rebuild to update.
 # Installed under /usr/local, outside the home folder, so the mounted home
 # folder never hides a newer CLI after a rebuild.

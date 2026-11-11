@@ -6,6 +6,10 @@ You are running inside a Docker container that a person uses to run Claude Code.
 - The only host folder you can see is `/workspace`. Your home folder, `/home/node`, is kept between restarts.
 - Some installs work without root, and are kept in the home folder: `npm install -g` (it installs into `~/.local`), programs placed in `~/.local/bin` (on `PATH`), and Python packages in a virtual environment (`python3 -m venv`), if Python is installed. `pip install --user` fails, because Debian marks its Python as externally managed.
 
+## The browser
+
+A shared Google Chrome runs on the virtual display `:99` (`DISPLAY` is set), and the person sees and uses it in the web UI's Browser tab. Use it through Claude Code's Claude in Chrome tools when they are on. Don't start another Chrome or close this one: the harness runs it, and every session shares it. If the tools aren't on, tell the person how to turn them on rather than installing another browser: add the Claude extension from the Chrome Web Store in the Browser tab and sign in to it, run `/chrome` and choose Enabled by default, then click Restart Chrome in the Browser tab.
+
 The system tools come from the person's `addons.conf`, a file in the harness checkout on the host, outside this container. You can't see or edit it. Each line names an installer and then packages separated by spaces:
 
 ```

@@ -7,11 +7,13 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const path = require('node:path');
 const { WebSocketServer } = require('ws');
 const { Slot, StartError, resolveStart } = require('./slots');
 const { FilesApi } = require('./files');
 const { UsageReports } = require('./usage');
+const { Browser, DISPLAY, VNC_PORT } = require('./browser');
 
 const PORT = Number(process.env.HARNESS_LISTEN_PORT || 8080);
 const PASSWORD = process.env.HARNESS_PASSWORD || '';
@@ -45,6 +47,7 @@ const FILES = {
   '/jobs.js': { file: path.join(PUBLIC, 'jobs.js'), type: 'text/javascript', auth: true },
   '/sidebar.js': { file: path.join(PUBLIC, 'sidebar.js'), type: 'text/javascript', auth: true },
   '/usage-view.js': { file: path.join(PUBLIC, 'usage-view.js'), type: 'text/javascript', auth: true },
+  '/browser-view.js': { file: path.join(PUBLIC, 'browser-view.js'), type: 'text/javascript', auth: true },
   '/favicon.svg': { file: path.join(PUBLIC, 'favicon.svg'), type: 'image/svg+xml', auth: false },
   '/vendor/highlight.mjs': { file: path.join(MODULES, '@highlightjs/cdn-assets/es/highlight.min.js'), type: 'text/javascript', auth: true },
   '/vendor/marked.mjs': { file: path.join(MODULES, 'marked/lib/marked.esm.js'), type: 'text/javascript', auth: true },
@@ -54,6 +57,16 @@ const FILES = {
   '/vendor/xterm.css': { file: path.join(XTERM, 'xterm/css/xterm.css'), type: 'text/css', auth: true },
   '/vendor/addon-fit.mjs': { file: path.join(XTERM, 'addon-fit/lib/addon-fit.mjs'), type: 'text/javascript', auth: true },
 };
+// The noVNC client for the Browser tab: its ES modules, served at the same
+// relative paths so their imports resolve.
+const NOVNC = path.join(MODULES, '@novnc/novnc');
+for (const dir of ['core', 'vendor']) {
+  for (const rel of fs.readdirSync(path.join(NOVNC, dir), { recursive: true })) {
+    if (!rel.endsWith('.js')) continue;
+    const file = path.join(NOVNC, dir, rel);
+    FILES[`/vendor/novnc/${dir}/${rel.split(path.sep).join('/')}`] = { file, type: 'text/javascript', auth: true };
+  }
+}
 for (const entry of Object.values(FILES)) entry.body = fs.readFileSync(entry.file);
 const LOGIN_PAGE = fs.readFileSync(path.join(PUBLIC, 'login.html'), 'utf8');
 
@@ -209,6 +222,18 @@ function taskOutput(res, sid, taskId) {
 }
 
 // POST /api/folders {path, name}: a new folder inside a workspace folder.
+// GET says whether the container has the browser; POST {action: 'restart'}
+// restarts Chrome.
+function handleBrowser(req, res) {
+  if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
+  if (req.method === 'GET') return json(res, 200, { available: browser.available });
+  if (req.method !== 'POST') return send(res, 405, {}, 'Method not allowed');
+  if (!sameOrigin(req, { required: true })) return json(res, 403, { error: 'forbidden' });
+  if (!browser.available) return json(res, 503, { error: 'This container has no browser.' });
+  browser.restartChrome();
+  json(res, 200, { ok: true });
+}
+
 async function handleMkdir(req, res) {
   if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
   if (!sameOrigin(req, { required: true })) return json(res, 403, { error: 'forbidden' });
@@ -245,6 +270,7 @@ const server = http.createServer((req, res) => {
     if (!tokenOf(req)) return json(res, 401, { error: 'not logged in' });
     return taskOutput(res, searchParams.get('sid'), searchParams.get('task'));
   }
+  if (pathname === '/api/browser') return handleBrowser(req, res);
   if (req.method === 'POST' && pathname === '/login') return void handleLogin(req, res);
   if (req.method === 'POST' && pathname === '/logout') return handleLogout(req, res);
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, {}, 'Method not allowed');
@@ -266,6 +292,9 @@ const server = http.createServer((req, res) => {
 
 const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 for (const key of Object.keys(env)) if (key.startsWith('HARNESS_')) delete env[key];
+const browser = new Browser(env);
+// Sessions see the shared browser's display, as a terminal on a desktop would.
+env.DISPLAY = DISPLAY;
 const files = new FilesApi(WORKDIR);
 const usage = new UsageReports({ root: WORKDIR, env: process.env });
 const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
@@ -491,10 +520,11 @@ function handleMessage(client, raw) {
 server.on('upgrade', (req, socket, head) => {
   const token = tokenOf(req);
   const url = new URL(req.url, 'http://localhost');
-  if (url.pathname !== '/ws' || !token || !sameOrigin(req, { required: true })) {
+  if (!['/ws', '/vnc'].includes(url.pathname) || !token || !sameOrigin(req, { required: true })) {
     socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
     return socket.destroy();
   }
+  if (url.pathname === '/vnc') return void vncUpgrade(req, socket, head);
   wss.handleUpgrade(req, socket, head, (client) => {
     client.token = token;
     client.alive = true;
@@ -506,9 +536,42 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
+// /vnc: the Browser tab's VNC connection, passed through unchanged to x11vnc
+// on localhost. Reading pauses while the page is behind, so a slow network
+// doesn't pile up screen updates in memory.
+const vncWss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
+function vncUpgrade(req, socket, head) {
+  if (!browser.available) {
+    socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+    return socket.destroy();
+  }
+  vncWss.handleUpgrade(req, socket, head, (client) => {
+    client.alive = true;
+    client.on('pong', () => (client.alive = true));
+    const vnc = net.connect(VNC_PORT, '127.0.0.1');
+    vnc.on('data', (data) => {
+      if (client.readyState !== client.OPEN) return;
+      client.send(data);
+      if (client.bufferedAmount > 4 << 20) {
+        vnc.pause();
+        const resume = setInterval(() => {
+          if (client.readyState !== client.OPEN || client.bufferedAmount < 1 << 20) {
+            clearInterval(resume);
+            vnc.resume();
+          }
+        }, 20);
+      }
+    });
+    client.on('message', (data) => vnc.write(data));
+    vnc.on('close', () => client.close());
+    vnc.on('error', () => client.close());
+    client.on('close', () => vnc.destroy());
+  });
+}
+
 // Drop connections that stopped answering pings (a sleeping laptop, a lost network).
 setInterval(() => {
-  for (const client of wss.clients) {
+  for (const client of [...wss.clients, ...vncWss.clients]) {
     if (!client.alive) client.terminate();
     client.alive = false;
     client.ping();
@@ -517,10 +580,12 @@ setInterval(() => {
 
 function shutdown() {
   for (const slot of slots.values()) slot.stop();
+  browser.stop();
   server.close();
   setTimeout(() => process.exit(0), 500).unref();
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
+browser.start();
 server.listen(PORT, () => console.log(`web UI listening on port ${PORT}, claude runs in ${WORKDIR}`));

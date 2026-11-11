@@ -10,6 +10,7 @@ import { SessionsView } from '/sessions.js';
 import { confirmAction, notice } from '/dialog.js';
 import { JobsPanel } from '/jobs.js';
 import { UsageView } from '/usage-view.js';
+import { BrowserView } from '/browser-view.js';
 import { Sidebar } from '/sidebar.js';
 
 const $ = (id) => document.getElementById(id);
@@ -90,6 +91,7 @@ chat.onJobs = () => {
   refreshStatus();
 };
 const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
+const browserView = new BrowserView($('view-browser'));
 const usageView = new UsageView($('view-usage'), { onStart: (opts) => startSession(opts), onOpenFolder: (folder) => openFolder(folder) });
 const sessionsView = new SessionsView($('view-sessions'), {
   onStart: (opts) => startSession(opts),
@@ -193,9 +195,10 @@ function showView(next) {
   $('view-files').hidden = next !== 'files';
   $('view-sessions').hidden = next !== 'sessions';
   $('view-usage').hidden = next !== 'usage';
-  // The Files, Sessions and Usage tabs work without a session, so the idle
-  // card stays off them.
-  document.body.classList.toggle('files-open', ['files', 'sessions', 'usage'].includes(next));
+  $('view-browser').hidden = next !== 'browser';
+  // The Browser, Files, Sessions and Usage tabs work without a session, so
+  // the idle card stays off them.
+  document.body.classList.toggle('files-open', ['browser', 'files', 'sessions', 'usage'].includes(next));
   document.body.dataset.view = next;
   store.set('harness-view', next);
   if (next === 'terminal' || next === 'chat') store.set('harness-session-view', next);
@@ -208,9 +211,11 @@ function showView(next) {
     filesView.load();
   } else if (next === 'sessions') {
     sessionsView.load();
-  } else {
+  } else if (next === 'usage') {
     usageView.load();
   }
+  if (next === 'browser') browserView.show();
+  else browserView.hide();
 }
 
 function openFolder(folder) {
@@ -252,7 +257,7 @@ const sidebar = new Sidebar({
 });
 
 const savedView = store.get('harness-view');
-showView(['chat', 'files', 'sessions', 'usage'].includes(savedView) ? savedView : 'terminal');
+showView(['chat', 'browser', 'files', 'sessions', 'usage'].includes(savedView) ? savedView : 'terminal');
 
 // ---- Status, title and notifications
 

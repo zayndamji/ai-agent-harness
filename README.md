@@ -11,6 +11,7 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
 - Notifies you when Claude finishes or needs an answer in any session while the tab is in the background.
 - Shows messages sessions send each other with Claude Code's own SendMessage, as cards in the Chat tab that link to the other session.
+- Has a Browser tab showing the container's own Chrome, which you can click and type in. Claude Code's Claude in Chrome drives the same Chrome, shared by every session.
 - Has a Files tab to browse the workspace, preview text and images, and download a file or a whole folder.
 - Starts a session in any workspace folder, new or resuming an earlier conversation, from the Files tab, and makes new folders. Several sessions can share a folder.
 - Has a Sessions tab listing every conversation, one line each, in a section per project folder, with search.
@@ -32,17 +33,18 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
 - The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears.
 - The live status line and dialogs are read from the server's copy of the screen.
+- The server runs Google Chrome on a virtual display (Xvfb) and shares it with x11vnc on localhost. The Browser tab draws it with noVNC over a WebSocket the server passes through behind the login.
 
 ## Repository layout
 
 | Path | What it holds |
 | --- | --- |
-| `Dockerfile` | The image: Claude Code CLI, ccusage, git, ripgrep, the server, non-root user |
+| `Dockerfile` | The image: Claude Code CLI, ccusage, git, ripgrep, Chrome with a virtual display and VNC, the server, non-root user |
 | `addons.example.conf` | Example add-ons: extra tools built into the image (copy to `addons.conf`) |
 | `install-addons.sh` | Installs the add-ons in `addons.conf` while the image builds |
 | `container-memory.md` | What every session is told about the container, built in as Claude Code's managed `CLAUDE.md` |
 | `compose.yaml` | The `web` and `claude` services, their folders and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `browser.js` (the shared Chrome, its display and VNC), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab, `browser-view.js` the Browser tab) |
 | `.env.example` | Settings for the web UI: workspace folder, password, address, port, `claude` arguments |
 
 ## Run the web UI
@@ -64,6 +66,13 @@ Open the address `./start.sh` prints (http://127.0.0.1:28471 by default), log in
 To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. A session whose folder is moved out, renamed or removed ends the next time you type into it or open it. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
 
 Tools for every session go in `addons.conf`, one line per installer (`apt:`, `npm:` or `pip:`) followed by package names. The next `./start.sh` rebuilds the image with them. Tools you install from a session (`npm install -g`, programs in `~/.local/bin`) are kept in `.claude-home`. For Python packages from a session, use a virtual environment (`python3 -m venv`, from the `python3-venv` add-on). Every session reads `container-memory.md` (copied to `/etc/claude-code/CLAUDE.md`), so when Claude needs a tool it can't install without root, it stops and gives you the line to add. When it installs one itself, it gives you the line too, so you can build it in.
+
+To let Claude use the browser, do this once, in the Browser tab and the Terminal tab:
+1. In the Browser tab, open the Chrome Web Store, add the Claude extension (Claude in Chrome), and sign in to it with the same Claude organization as Claude Code.
+2. In a session, run `/chrome` and choose Enabled by default. It sets up the link between Claude Code and Chrome.
+3. Click Restart Chrome in the Browser tab, so Chrome picks up that link.
+
+Chrome's profile, with the extension and its sign-in, is kept in `.claude-home`. Paste text in the Browser tab pastes into Chrome; Cmd+V on a Mac doesn't reach it.
 
 ⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
@@ -88,7 +97,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 | Goal | Status | Next step |
 | --- | --- | --- |
 | Sandboxed Claude Code container | 🟡 | Sign in and check the login survives a restart |
-| Single session web UI | ✅ | |
+| Single session web UI | 🟡 | Sign in to Claude in Chrome and let a session drive the browser |
 | Several sessions with message passing | ✅ | |
 | Always-on Raspberry Pi | ⬜ | Image built for arm64 and amd64 |
 
@@ -112,6 +121,8 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ A session ends when its folder is moved out of the workspace or removed (`server/slots.js`)
 - ✅ Questions shown in the Chat tab, and a Background panel for agents and background commands (`server/screen.js`, `server/public/jobs.js`)
 - ✅ Usage tab from ccusage, offline (`server/usage.js`, `server/public/usage-view.js`)
+- ✅ Browser tab with the container's shared Chrome (`server/browser.js`, `server/public/browser-view.js`)
+- 🟡 A session driving that Chrome with Claude in Chrome
 
 ### Several sessions with message passing
 

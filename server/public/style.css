@@ -244,6 +244,33 @@ body.app {
 .terminal-view { background: var(--term-bg); }
 .terminal { position: absolute; inset: 10px 6px 10px 14px; }
 
+/* Browser */
+
+.browser-view { display: flex; flex-direction: column; background: var(--term-bg); }
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.browser-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-2); }
+.browser-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.browser-status[data-state="on"]::before { background: var(--ok); }
+.browser-status[data-state="connecting"]::before { background: var(--warn); }
+.browser-spacer { flex: 1; }
+.browser-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.browser-message {
+  position: absolute;
+  inset: 50% 16px auto;
+  transform: translateY(-50%);
+  text-align: center;
+  color: var(--code-text);
+  font-size: 13px;
+  pointer-events: none;
+}
+
 /* Idle */
 
 .idle {

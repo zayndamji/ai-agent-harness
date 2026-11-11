@@ -43,6 +43,7 @@
     <nav class="tabs" role="tablist" aria-label="Views">
       <button id="tab-chat" type="button" role="tab" data-view="chat" aria-selected="false">Chat</button>
       <button id="tab-terminal" type="button" role="tab" data-view="terminal" aria-selected="true">Terminal</button>
+      <button id="tab-browser" type="button" role="tab" data-view="browser" aria-selected="false">Browser</button>
       <button id="tab-files" type="button" role="tab" data-view="files" aria-selected="false">Files</button>
       <button id="tab-sessions" type="button" role="tab" data-view="sessions" aria-selected="false">Sessions</button>
       <button id="tab-usage" type="button" role="tab" data-view="usage" aria-selected="false">Usage</button>
@@ -113,6 +114,7 @@
       <div id="terminal" class="terminal"></div>
     </section>
 
+    <section id="view-browser" class="view browser-view" role="tabpanel" aria-labelledby="tab-browser" hidden></section>
     <section id="view-files" class="view files-view" role="tabpanel" aria-labelledby="tab-files" hidden></section>
     <section id="view-sessions" class="view files-view" role="tabpanel" aria-labelledby="tab-sessions" hidden></section>
     <section id="view-usage" class="view usage-view" role="tabpanel" aria-labelledby="tab-usage" hidden></section>
