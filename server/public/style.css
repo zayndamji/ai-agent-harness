@@ -222,13 +222,20 @@ body.app {
 .tabs button:hover { background: transparent; color: var(--text); }
 .tabs button[aria-selected="true"] { background: var(--bg-raised); color: var(--text); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
 
+/* Sideways strips (edgeFade in chat.js) fade where more is hidden. */
+[data-fade="end"] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+[data-fade="start"] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); }
+[data-fade="both"] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); }
+
 @media (max-width: 640px) {
   .bar { grid-template-columns: auto 1fr auto; gap: 8px; padding: 0 12px; }
   .bar-left { gap: 8px; }
   .brand-name, .status #status-text { display: none; }
   .status { padding: 6px; }
-  .tabs { justify-self: center; }
-  .tabs button { padding: 6px 9px; font-size: 12.5px; }
+  /* Too narrow for all five tabs: they scroll sideways, with a fade. */
+  .tabs { justify-self: center; max-width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; padding: 6px 9px; font-size: 12.5px; }
   .session-bar, .tasks > details, .chat-scroll { padding-left: 14px; padding-right: 14px; }
   .composer-wrap { padding: 8px 10px 10px; }
 }
@@ -287,13 +294,13 @@ body.app {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* One line, cut with an ellipsis, so a separator never starts a line. */
 .session-meta {
-  display: flex;
-  flex-wrap: wrap;
-  column-gap: 0;
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .session-meta > span + span::before { content: "·"; margin: 0 7px; color: var(--border-strong); }
 .session-meta .accent { color: var(--accent); }
@@ -1072,11 +1079,12 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
 
 /* Background commands and agents */
 
+/* Lines up with the message column, like the session bar. */
 .background {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 16px;
+  padding: 7px max(16px, calc((100% - 780px) / 2));
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
   overflow-x: auto;

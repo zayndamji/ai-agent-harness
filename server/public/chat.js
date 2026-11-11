@@ -76,6 +76,29 @@ export function icon(name) {
   return span;
 }
 
+// "4.2s", "29s", "7m 18s", "1h 3m": the way Claude Code's spinner counts.
+const formatDuration = (ms) => {
+  const s = ms / 1000;
+  if (s < 10) return `${s.toFixed(1)}s`;
+  if (s < 60) return `${Math.round(s)}s`;
+  const total = Math.round(s);
+  if (total < 3600) return `${Math.floor(total / 60)}m ${total % 60}s`;
+  return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
+};
+
+// A strip that scrolls sideways fades at the edge that has more to show.
+export function edgeFade(strip) {
+  const update = () => {
+    const more = strip.scrollWidth - strip.clientWidth > 1;
+    const start = more && strip.scrollLeft > 1;
+    const end = more && strip.scrollLeft < strip.scrollWidth - strip.clientWidth - 1;
+    strip.dataset.fade = start && end ? 'both' : start ? 'start' : end ? 'end' : '';
+  };
+  strip.addEventListener('scroll', update, { passive: true });
+  new ResizeObserver(update).observe(strip);
+  return update;
+}
+
 const clock = (at) => (at ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '');
 const tokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
 const clipChars = (text, max = PREVIEW_CHARS) => (text.length > max ? `${text.slice(0, max)}\n[... ${text.length - max} more characters]` : text);
@@ -187,6 +210,7 @@ export class ChatView {
     // Names drawn as plain text because their session wasn't known yet.
     this.unlinked = [];
     this.background = background;
+    this.backgroundFade = edgeFade(background);
     this.jobs = new Map();
     this.agentCards = new Map();
     this.waitingSteps = new Map();
@@ -574,6 +598,7 @@ export class ChatView {
       return item;
     });
     this.background.replaceChildren(head, ...list);
+    this.backgroundFade();
   }
 
   setRunning(card, text) {
@@ -899,7 +924,7 @@ export class ChatView {
         const node = el('div', 'turn-end');
         const ok = icon('check');
         ok.classList.add('ok');
-        const parts = [`Done in ${(entry.durationMs / 1000).toFixed(1)} s`];
+        const parts = [`Done in ${formatDuration(entry.durationMs)}`];
         if (entry.outputTokens) parts.push(`${tokens(entry.outputTokens)} tokens`);
         if (entry.at) parts.push(clock(entry.at));
         node.append(ok, el('span', '', parts.join(' · ')));

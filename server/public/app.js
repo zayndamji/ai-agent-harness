@@ -3,7 +3,7 @@
 // changes back over the WebSocket.
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
-import { ChatView, tokens } from '/chat.js';
+import { ChatView, tokens, edgeFade } from '/chat.js';
 import { FilesView } from '/files.js';
 import { SessionsView } from '/sessions.js';
 import { confirmAction, notice } from '/dialog.js';
@@ -190,6 +190,7 @@ function showView(next) {
   view = next;
   for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
     tab.setAttribute('aria-selected', String(tab.dataset.view === next));
+    if (tab.dataset.view === next) tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }
   $('view-terminal').hidden = next !== 'terminal';
   $('view-chat').hidden = next !== 'chat';
@@ -226,6 +227,8 @@ function openFolder(folder) {
 for (const tab of document.querySelectorAll('.tabs [role="tab"]')) {
   tab.addEventListener('click', () => showView(tab.dataset.view));
 }
+// On a phone the tabs scroll sideways, fading where more of them hide.
+edgeFade(document.querySelector('.tabs'));
 const sidebar = new Sidebar({
   list: $('slot-list'),
   count: $('slot-count'),
