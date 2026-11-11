@@ -1,17 +1,26 @@
 name: claude-harness
 
-# Shared by both services: same image, same volumes, same restrictions.
+# Shared by both services: same image, same folders, same restrictions.
 x-claude: &claude
   build: .
   image: claude-harness:latest
   hostname: claude-box
   init: true
+  # Everything lives in the one folder HARNESS_WORKSPACE names. Nothing else
+  # from the host is mounted.
   volumes:
-    # Login, settings and session history (~/.claude and ~/.claude.json).
-    - home:/home/node
-    # Projects Claude works on: the folder HARNESS_WORKSPACE names, or the
-    # `workspace` volume when it's empty. Nothing else from the host is mounted.
-    - ${HARNESS_WORKSPACE:-workspace}:/workspace
+    # Projects Claude works on.
+    - ${HARNESS_WORKSPACE:?Set HARNESS_WORKSPACE in .env}:/workspace
+    # The home folder: login, settings and session history (~/.claude and
+    # ~/.claude.json), kept in the workspace folder's .claude-home.
+    - ${HARNESS_WORKSPACE}/.claude-home:/home/node
+    # Hides .claude-home inside /workspace, so sessions and the Files tab see
+    # only projects there. It stays reachable at /home/node.
+    - type: tmpfs
+      target: /workspace/.claude-home
+      read_only: true
+      tmpfs:
+        size: 4096
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
@@ -33,7 +42,3 @@ services:
     ports:
       - "${HARNESS_BIND:-127.0.0.1}:${HARNESS_PORT:-28471}:8080"
     restart: unless-stopped
-
-volumes:
-  home:
-  workspace:

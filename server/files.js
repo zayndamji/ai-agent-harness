@@ -8,6 +8,8 @@ const { spawn } = require('node:child_process');
 const { listSessions, listAllSessions, countSessions } = require('./transcript');
 
 const MAX_ENTRIES = 2000;
+// Left out of the workspace's top-level listing (see compose.yaml).
+const HOME_FOLDER = '.claude-home';
 const MAX_PREVIEW = 5 * 1024 * 1024;
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
 
@@ -44,6 +46,9 @@ class FilesApi {
     const rootReal = fs.realpathSync(this.root);
     const items = [];
     for (const dirent of fs.readdirSync(real, { withFileTypes: true }).slice(0, MAX_ENTRIES)) {
+      // The container's home folder lives in the workspace folder on the host,
+      // and compose.yaml covers it with an empty, locked folder here.
+      if (clean === '' && dirent.name === HOME_FOLDER) continue;
       try {
         const full = path.join(real, dirent.name);
         // A link out of the workspace is listed, but nothing about its target is shown.

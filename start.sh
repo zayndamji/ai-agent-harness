@@ -42,18 +42,19 @@ fi
 # The workspace folder must already exist: Docker would otherwise make an
 # empty one, and a typo would hide your projects. Never the whole home folder.
 workspace=$(grep -E '^HARNESS_WORKSPACE=' .env | cut -d= -f2- || true)
-if [ -n "$workspace" ]; then
-  case $workspace in "~"|"~/"*) workspace=$HOME${workspace#\~} ;; esac
-  if [ ! -d "$workspace" ]; then
-    echo "HARNESS_WORKSPACE in .env is $workspace, which isn't a folder. Make it first." >&2
-    exit 1
-  fi
-  real=$(cd "$workspace" && pwd -P)
-  if [ "$real" = "$(cd "$HOME" && pwd -P)" ] || [ "$real" = / ]; then
-    echo "HARNESS_WORKSPACE can't be your home folder or /. Use a folder made for Claude." >&2
-    exit 1
-  fi
+case $workspace in "~"|"~/"*) workspace=$HOME${workspace#\~} ;; esac
+if [ -z "$workspace" ] || [ ! -d "$workspace" ]; then
+  echo "Set HARNESS_WORKSPACE in .env to a folder that exists (now: '$workspace')." >&2
+  exit 1
 fi
+real=$(cd "$workspace" && pwd -P)
+if [ "$real" = "$(cd "$HOME" && pwd -P)" ] || [ "$real" = / ]; then
+  echo "HARNESS_WORKSPACE can't be your home folder or /. Use a folder made for Claude." >&2
+  exit 1
+fi
+# The container's home folder. Made here, by you, because one Docker makes
+# would belong to root on Linux and the container couldn't write to it.
+mkdir -p "$workspace/.claude-home"
 
 docker compose up -d --build web
 
@@ -65,7 +66,7 @@ url="http://127.0.0.1:$port"
 for _ in $(seq 1 30); do
   if curl -fs -o /dev/null "$url/login"; then
     echo "The web UI is running at $url"
-    [ -n "$workspace" ] && echo "Claude works in $workspace (/workspace in the container)."
+    echo "Claude works in $workspace (/workspace in the container)."
     if [ "$bind" = 0.0.0.0 ]; then
       echo "It is also open to the local network, on this machine's address, port $port."
     else
