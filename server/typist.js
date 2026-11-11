@@ -4,23 +4,36 @@
 // the Left and Right arrow keys, and a line feed for a new line. Send then
 // only presses Enter.
 //
-// Anything it can't type exactly waits for Send instead: a long paste, a tab
-// or other control character, a leading "!" (which switches Claude Code to
-// shell mode) or "?", or an edit while a dialog covers the input box. Send
-// then deletes what was typed and pastes the whole message, as the message
-// box did before. The screen is read back after typing; if Claude's box
+// Keys go in at a person's pace: a key the user types goes in when they type
+// it, and several keys from one edit come a typist's gap apart. A short
+// paste is pasted at the cursor, as a terminal pastes. Clearing a long box
+// is Escape twice, or Backspace held down while Claude works.
+//
+// Anything it can't do that way waits for Send instead: a long or
+// multi-line paste, a tab or other control character, a leading "!" (which
+// switches Claude Code to shell mode) or "?", or an edit while a dialog
+// covers the input box. Send then clears what was typed and pastes the
+// whole message. The screen is read back after typing; if Claude's box
 // doesn't hold what was typed (someone typed in the Terminal tab, say),
 // typing stops and Send clears the box before pasting.
 
 const { readStatus, readInputBox } = require('./screen');
 
-const KEY_GAP = 12; // ms between key writes
-// A held-down key: Backspace or an arrow repeated many times in a row goes
-// faster, still one key per write, as a terminal sends a key it repeats.
-const REPEAT_GAP = 4;
-const REPEAT_AFTER = 8; // repeats of one key before it speeds up
-const TYPE_PASTE_MAX = 200; // a longer paste waits for Send and is pasted whole
-const TYPE_MAX = 2000; // the same for text inserted any other way
+// Every gap between keys is random, around a person's usual speed, and
+// mostly near the middle: [average, spread] in ms, giving average ± spread.
+// Typing averages 120 ms a key, about 100 words a minute.
+const TYPE = [120, 60];
+// A held-down Backspace or arrow key starts repeating after a moment, then
+// repeats at a usual key-repeat rate.
+const REPEAT_DELAY = [350, 100];
+const REPEAT = [40, 10];
+const ESCAPE = [180, 60]; // between the two Escapes that clear the box
+const LOOK = [300, 100]; // a look at the box before pressing Enter
+// Clearing more than this many characters is Escape twice, as Claude Code
+// offers, rather than holding Backspace.
+const CLEAR_WITH_ESCAPE = 20;
+const PASTE_MAX = 200; // a longer or multi-line paste waits for Send and is pasted whole
+const TYPE_MAX = 2000; // text inserted any other way waits for Send past this
 const SETTLE = 200; // ms for Claude Code to redraw before the box is read
 const WAIT_SAFE = 3000; // how long an edit waits for a dialog to close
 const BACKSPACE = '\x7f';
@@ -32,6 +45,12 @@ const segmenter = new Intl.Segmenter();
 const graphemes = (text) => Array.from(segmenter.segment(text), (s) => s.segment);
 const squash = (text) => text.replace(/\s+/g, '');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// A random gap: the sum of two random numbers, so gaps near the average are
+// the most common and the ends are rare.
+const human = ([average, spread]) => average + (Math.random() + Math.random() - 1) * spread;
+const typeGap = () => human(TYPE);
+const lookGap = () => human(LOOK);
+const repeatable = (key) => key === BACKSPACE || key.startsWith('\x1b[') || key.startsWith('\x1bO');
 
 // Claude Code moves and deletes by grapheme, so offsets must fall between them.
 function onBoundary(text, offset) {
@@ -188,18 +207,54 @@ class Typist {
     return { left: app ? '\x1bOD' : '\x1b[D', right: app ? '\x1bOC' : '\x1b[C' };
   }
 
-  // Writes keys one at a time, a few milliseconds apart, as a terminal sends
-  // them. A long run of one key (clearing a long message) speeds up like a
-  // held-down key, so it doesn't take minutes.
+  // Writes one key (or one paste) no sooner than `gap` ms after the last
+  // write. False if the session ended or was reset meanwhile.
+  async writeAfter(gen, gap, data) {
+    const wait = this.lastWrite + gap - Date.now();
+    if (wait > 0) await sleep(wait);
+    if (gen !== this.gen || !this.session.running) return false;
+    this.session.write(data);
+    this.lastWrite = Date.now();
+    return true;
+  }
+
+  // Presses keys one at a time. The first goes in now, when the user made
+  // the edit; the rest follow at a typist's pace, and a run of one
+  // Backspace or arrow key repeats like a held-down key.
   async press(gen, keys) {
-    let run = 0;
     for (let i = 0; i < keys.length; i++) {
-      if (gen !== this.gen || !this.session.running) return false;
-      this.session.write(keys[i]);
-      this.lastWrite = Date.now();
-      run = i > 0 && keys[i] === keys[i - 1] ? run + 1 : 0;
-      await sleep(run >= REPEAT_AFTER ? REPEAT_GAP : KEY_GAP);
+      const key = keys[i];
+      const held = i > 0 && repeatable(key) && keys[i - 1] === key;
+      const gap = i === 0 ? 0 : !held ? typeGap() : human(keys[i - 2] === key ? REPEAT : REPEAT_DELAY);
+      if (!(await this.writeAfter(gen, gap, key))) return false;
     }
+    return true;
+  }
+
+  // Pastes text at the cursor as a terminal does: new lines become carriage
+  // returns, wrapped in bracketed paste markers when Claude Code asked for them.
+  pasteText(gen, mirror, text) {
+    const body = text.replace(/\x1b/g, '').replace(/\n/g, '\r');
+    return this.writeAfter(gen, typeGap(), mirror.modes.bracketedPasteMode ? `\x1b[200~${body}\x1b[201~` : body);
+  }
+
+  // Escape twice: Claude Code clears a box that has text in it. Never while
+  // Claude works, when Escape would interrupt it.
+  async clearWithEscape(gen) {
+    return (await this.writeAfter(gen, typeGap(), '\x1b')) && this.writeAfter(gen, human(ESCAPE), '\x1b');
+  }
+
+  // Deletes everything typed: Escape twice for a long box when Claude is
+  // idle, else Backspace from the end.
+  async erase(gen, screen) {
+    const working = screen.status.spinner || screen.status.working;
+    const ok =
+      graphemes(this.text).length > CLEAR_WITH_ESCAPE && !working
+        ? await this.clearWithEscape(gen)
+        : await this.press(gen, [...this.moves(screen.mirror, this.cursor, this.text.length), ...graphemes(this.text).map(() => BACKSPACE)]);
+    if (!ok) return false;
+    this.text = '';
+    this.cursor = 0;
     return true;
   }
 
@@ -227,19 +282,27 @@ class Typist {
     const edit = diff(this.text, text, caret);
     if (!onBoundary(this.text, edit.start) || !onBoundary(this.text, edit.end)) return this.defer('edit splits a character');
     if (!TYPEABLE.test(edit.insert)) return this.defer('tab or control character');
-    if (edit.insert.length > (paste ? TYPE_PASTE_MAX : TYPE_MAX)) return this.defer('long paste');
+    const pasted = paste && edit.insert !== '';
+    if (pasted && (edit.insert.length > PASTE_MAX || edit.insert.includes('\n'))) return this.defer('long or multi-line paste');
+    if (edit.insert.length > TYPE_MAX) return this.defer('long insert');
 
     const screen = await this.waitForBox(gen);
     if (gen !== this.gen) return;
     if (!screen) return this.defer('input box not on screen');
 
+    // Everything deleted at once (select all, then Backspace).
+    if (!edit.insert && edit.start === 0 && edit.end === this.text.length) {
+      if (await this.erase(gen, screen)) this.scheduleCheck(SETTLE + 100);
+      return;
+    }
     const keys = [
       ...this.moves(screen.mirror, this.cursor, edit.end),
       ...graphemes(this.text.slice(edit.start, edit.end)).map(() => BACKSPACE),
-      ...graphemes(edit.insert),
+      ...(pasted ? [] : graphemes(edit.insert)),
     ];
     // A run cut off by the session ending is discarded with the reset.
     if (!(await this.press(gen, keys))) return;
+    if (pasted && !(await this.pasteText(gen, screen.mirror, edit.insert))) return;
     this.text = text;
     this.cursor = edit.start + edit.insert.length;
     this.scheduleCheck(SETTLE + 100);
@@ -266,10 +329,7 @@ class Typist {
     if (this.state === 'deferred') {
       const screen = await this.waitForBox(gen);
       if (!screen) return this.refuse('Claude Code is showing a question or a menu. Answer it in the Chat or Terminal tab, then send again.');
-      const keys = [...this.moves(screen.mirror, this.cursor, this.text.length), ...graphemes(this.text).map(() => BACKSPACE)];
-      if (!(await this.press(gen, keys))) return;
-      this.text = '';
-      this.cursor = 0;
+      if (!(await this.erase(gen, screen))) return;
       const after = await this.settledScreen();
       if (after?.box?.text === '') return this.paste(gen, message);
       this.state = 'lost';
@@ -298,11 +358,7 @@ class Typist {
     if (screen.status.spinner || screen.status.working) {
       return this.refuse("Claude Code's input box has other text in it. Clear it in the Terminal tab, then send again.");
     }
-    this.session.write('\x1b');
-    await sleep(150);
-    if (gen !== this.gen) return;
-    this.session.write('\x1b');
-    this.lastWrite = Date.now();
+    if (!(await this.clearWithEscape(gen))) return;
     const after = await this.settledScreen();
     if (after?.box?.text === '') return this.paste(gen, message);
     return this.refuse("Couldn't clear Claude Code's input box. Clear it in the Terminal tab, then send again.");
@@ -311,12 +367,7 @@ class Typist {
   async paste(gen, message) {
     const screen = await this.screen();
     if (!screen || gen !== this.gen) return;
-    // As xterm.js pastes: new lines become carriage returns, wrapped in
-    // bracketed paste markers when Claude Code has turned that on.
-    const body = message.replace(/\x1b/g, '').replace(/\n/g, '\r');
-    this.session.write(screen.mirror.modes.bracketedPasteMode ? `\x1b[200~${body}\x1b[201~` : body);
-    this.lastWrite = Date.now();
-    await sleep(80);
+    if (!(await this.pasteText(gen, screen.mirror, message))) return;
     return this.enter(gen, message);
   }
 
@@ -324,9 +375,7 @@ class Typist {
   // (after "@file" or "/command"); if the text is still in the box a moment
   // later, Enter is pressed once more, as a person would.
   async enter(gen, message) {
-    if (gen !== this.gen) return;
-    this.session.write('\r');
-    this.lastWrite = Date.now();
+    if (!(await this.writeAfter(gen, lookGap(), '\r'))) return;
     this.state = 'idle';
     this.text = '';
     this.cursor = 0;
@@ -339,8 +388,7 @@ class Typist {
     const second = await this.screen();
     if (gen !== this.gen || !second?.box || squash(second.box.text) !== left) return;
     console.log('typist: Enter left the message in the box (autocomplete open), pressing Enter again');
-    this.session.write('\r');
-    this.lastWrite = Date.now();
+    await this.writeAfter(gen, 0, '\r');
   }
 
   // Nothing was sent. What was typed stays in Claude's box and in the
@@ -352,4 +400,4 @@ class Typist {
 
 class SendError extends Error {}
 
-module.exports = { Typist, diff, graphemes, KEY_GAP };
+module.exports = { Typist, diff, graphemes, human, typeGap, lookGap };

@@ -6,7 +6,7 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 
 - Runs several Claude Code sessions at once, listed in a sidebar with what each is doing: working, waiting for your answer, or ready.
 - Sends your keystrokes and messages to the session and streams its output back.
-- Types what you write in the message box into Claude Code as you type it, key by key, like a person at the terminal, and pastes it on Send when it can't be typed exactly.
+- Types what you write in the message box into Claude Code as you type it, key by key at a person's pace, like someone at the terminal, and pastes it on Send when it can't be typed exactly.
 - Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results. A run of tool calls folds into one line that opens to show each call.
 - In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, long pasted messages folded to their first lines, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
 - Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
@@ -28,7 +28,8 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - A Docker image holds the `claude` CLI and the server (`server/`).
 - The server runs each session's `claude` in its own pseudo-terminal and streams the one a browser is looking at over a WebSocket.
 - The browser draws the terminal with xterm.js. Keys typed in the terminal go back to `claude`.
-- Each change in the message box goes to the server, which presses the same keys in Claude Code's input box (characters, Backspace, arrow keys) and checks the box on screen afterwards. Send presses Enter.
+- Each change in the message box goes to the server, which presses the same keys in Claude Code's input box (characters, Backspace, arrow keys, a paste) one at a time, with random human-speed gaps, and checks the box on screen afterwards. Send presses Enter.
+- Each session starts as plain `claude`, or `claude --resume <id>` to resume, and the server reads the new conversation's id from the record Claude Code keeps for its process.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
 - The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
 - The live status line, suggestions and dialogs are read from the server's copy of the screen.
