@@ -11,7 +11,11 @@ const { EventEmitter } = require('node:events');
 const { Session } = require('./session');
 const { TranscriptFollower, listSessions } = require('./transcript');
 const { readStatus, readInputBox } = require('./screen');
-const { Typist } = require('./typist');
+const { Typist, graphemes, KEY_GAP } = require('./typist');
+
+const ANSWER_GAP = 60; // ms between arrow keys in a dialog
+const SETTLE = 200; // ms for Claude Code to redraw before the screen is read again
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -317,44 +321,81 @@ class Slot extends EventEmitter {
 
   // answer {question, option, text?}: picks a choice in the dialog on screen,
   // the way a person would: arrow keys from the highlighted choice to the
-  // chosen one, then Enter. For "Type something." the text is typed before
-  // Enter. The screen is read again first, and nothing is sent unless it
-  // still shows the same question with that choice. `fail` gets a message
-  // for the browser when nothing was sent.
+  // chosen one, a look at the screen, then Enter. For "Type something." the
+  // text is typed key by key before Enter. Nothing is sent unless the screen
+  // still shows the same question with that choice, and Enter waits until
+  // the highlight is on it. `fail` gets a message for the browser when
+  // nothing more was sent.
   answer(msg, fail) {
     if (!this.running) return fail('No session is running.');
     if (this.checkFolder()) return fail(`/${this.folder} was moved or removed, so the session ended.`);
     if (this.answering) return fail('Still sending the last answer.');
-    this.session.withScreen((mirror) => {
-      const dialog = readStatus(mirror).dialog;
-      if (!dialog || !dialog.answerable) return fail('That question is no longer on screen. Answer it in the Terminal tab.');
-      if (dialog.question !== msg.question) return fail('The question on screen changed. Check the Terminal tab.');
-      const option = dialog.options.find((o) => o.n === msg.option);
-      if (!option) return fail('That choice is no longer on screen.');
-      const text = typeof msg.text === 'string' ? msg.text.replace(/[\r\n]+/g, ' ').trim() : '';
-      if (option.n === dialog.freeText && !text) return fail('Type an answer first.');
-      // Arrow keys depend on the terminal's cursor key mode.
-      const app = mirror.modes.applicationCursorKeysMode;
-      const down = app ? '\x1bOB' : '\x1b[B';
-      const up = app ? '\x1bOA' : '\x1b[A';
-      const delta = option.n - dialog.selected;
-      const keys = Array(Math.abs(delta)).fill(delta > 0 ? down : up);
-      if (option.n === dialog.freeText) keys.push(text);
-      keys.push('\r');
-      this.answering = true;
-      this.noteInput();
-      const sendNext = () => {
-        if (!keys.length || !this.running) {
-          this.answering = false;
-          return;
-        }
-        this.session.write(keys.shift());
-        setTimeout(sendNext, 60);
-      };
-      sendNext();
-      this.typist.noteRawInput();
-      console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);
+    this.answering = true;
+    this.noteInput();
+    this.sendAnswer(msg)
+      .then((problem) => problem && fail(problem))
+      .catch((err) => console.error('answer:', err.message))
+      .finally(() => {
+        this.answering = false;
+        this.typist.noteRawInput();
+      });
+  }
+
+  screenNow() {
+    return new Promise((resolve) => {
+      if (!this.running) return resolve(null);
+      this.session.withScreen(resolve);
     });
+  }
+
+  // Writes keys one at a time, `gap` ms apart. False if the session ended.
+  async pressKeys(keys, gap) {
+    for (const key of keys) {
+      if (!this.running) return false;
+      this.session.write(key);
+      await sleep(gap);
+    }
+    return this.running;
+  }
+
+  async sendAnswer(msg) {
+    const mirror = await this.screenNow();
+    if (!mirror) return 'No session is running.';
+    const dialog = readStatus(mirror).dialog;
+    if (!dialog || !dialog.answerable) return 'That question is no longer on screen. Answer it in the Terminal tab.';
+    if (dialog.question !== msg.question) return 'The question on screen changed. Check the Terminal tab.';
+    const option = dialog.options.find((o) => o.n === msg.option);
+    if (!option) return 'That choice is no longer on screen.';
+    const free = option.n === dialog.freeText;
+    // Only printable text is typed: new lines and control keys would answer
+    // or cancel the dialog.
+    const text = typeof msg.text === 'string' ? msg.text.replace(/[\x00-\x1f\x7f]+/g, ' ').trim() : '';
+    if (free && !text) return 'Type an answer first.';
+
+    // Arrow keys depend on the terminal's cursor key mode.
+    const app = mirror.modes.applicationCursorKeysMode;
+    const delta = option.n - dialog.selected;
+    const arrow = delta > 0 ? (app ? '\x1bOB' : '\x1b[B') : app ? '\x1bOA' : '\x1b[A';
+    if (!(await this.pressKeys(Array(Math.abs(delta)).fill(arrow), ANSWER_GAP))) return null;
+
+    // Look before pressing on: the same question, with the highlight on the
+    // chosen line. "Type something." may turn into a text box and lose its
+    // highlight, so there only a different highlight stops it.
+    await sleep(SETTLE);
+    const moved = await this.screenNow();
+    const now = moved && readStatus(moved).dialog;
+    const stray = 'The highlighted choice on screen isn\'t the one you picked. Check the Terminal tab.';
+    if (!now || now.question !== msg.question) return 'The question on screen changed. Check the Terminal tab.';
+    if (now.selected !== option.n && !(free && now.selected === null)) return stray;
+
+    if (free) {
+      if (!(await this.pressKeys(graphemes(text), KEY_GAP))) return null;
+      await sleep(SETTLE);
+    }
+    if (!this.running) return null;
+    this.session.write('\r');
+    console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);
+    return null;
   }
 }
 

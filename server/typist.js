@@ -15,7 +15,10 @@
 const { readStatus, readInputBox } = require('./screen');
 
 const KEY_GAP = 12; // ms between key writes
-const BURST = 16; // Backspace or arrow keys per write in long runs
+// A held-down key: Backspace or an arrow repeated many times in a row goes
+// faster, still one key per write, as a terminal sends a key it repeats.
+const REPEAT_GAP = 4;
+const REPEAT_AFTER = 8; // repeats of one key before it speeds up
 const TYPE_PASTE_MAX = 200; // a longer paste waits for Send and is pasted whole
 const TYPE_MAX = 2000; // the same for text inserted any other way
 const SETTLE = 200; // ms for Claude Code to redraw before the box is read
@@ -185,19 +188,17 @@ class Typist {
     return { left: app ? '\x1bOD' : '\x1b[D', right: app ? '\x1bOC' : '\x1b[C' };
   }
 
-  // Writes keys a few milliseconds apart. Long runs of the same control key
-  // go a few per write, so clearing a long message doesn't take minutes.
+  // Writes keys one at a time, a few milliseconds apart, as a terminal sends
+  // them. A long run of one key (clearing a long message) speeds up like a
+  // held-down key, so it doesn't take minutes.
   async press(gen, keys) {
-    for (let i = 0; i < keys.length; ) {
+    let run = 0;
+    for (let i = 0; i < keys.length; i++) {
       if (gen !== this.gen || !this.session.running) return false;
-      let n = 1;
-      if (keys.length - i > BURST * 2 && keys[i].length && (keys[i] === BACKSPACE || keys[i][0] === '\x1b')) {
-        while (n < BURST && keys[i + n] === keys[i]) n++;
-      }
-      this.session.write(keys.slice(i, i + n).join(''));
+      this.session.write(keys[i]);
       this.lastWrite = Date.now();
-      i += n;
-      await sleep(KEY_GAP);
+      run = i > 0 && keys[i] === keys[i - 1] ? run + 1 : 0;
+      await sleep(run >= REPEAT_AFTER ? REPEAT_GAP : KEY_GAP);
     }
     return true;
   }
@@ -351,4 +352,4 @@ class Typist {
 
 class SendError extends Error {}
 
-module.exports = { Typist, diff };
+module.exports = { Typist, diff, graphemes, KEY_GAP };
