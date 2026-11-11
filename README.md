@@ -1,6 +1,6 @@
-# Claude Code web harness
+# AI agent harness
 
-A self-hosted web UI that runs the real `claude` CLI inside a Docker container and lets you drive it from a browser. The container sees only one folder on the host machine, the workspace folder you choose. It runs on a Mac with Docker Desktop and later on a Raspberry Pi 5.
+A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Docker container and lets you drive it from a browser. It is not made by or affiliated with Anthropic. The container sees only one folder on the host machine, the workspace folder you choose. It runs on a Mac with Docker Desktop and later on a Raspberry Pi 5.
 
 ## What it does
 
@@ -67,6 +67,8 @@ Tools for every session go in `addons.conf`, one line per installer (`apt:`, `np
 ⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
 ⚠️ `.claude-home` holds your Claude login token in a plain file. Keep the workspace folder out of cloud sync and shared folders.
+
+Sign in with your own Claude account, and keep the web UI to yourself. Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) don't let you share an account or make it available to anyone else, so use `--lan` only to reach the web UI from your own devices. The harness runs the unmodified `claude` from npm, and Claude Code handles the login itself. Everything the harness sends to a session starts with something you did in the page, typed into the terminal one key at a time.
 
 Only this computer can open the web UI, unless you start it with `./start.sh --lan`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 

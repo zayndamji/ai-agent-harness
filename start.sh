@@ -69,6 +69,7 @@ for _ in $(seq 1 30); do
     echo "Claude works in $workspace (/workspace in the container)."
     if [ "$bind" = 0.0.0.0 ]; then
       echo "It is also open to the local network, on this machine's address, port $port."
+      echo "Use it only from your own devices: your Claude account is for you alone."
     else
       echo "Only this computer can open it. Use ./start.sh --lan to open it to the local network."
     fi

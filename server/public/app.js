@@ -21,7 +21,7 @@ const startBtn = $('start');
 const message = $('message');
 const sendBtn = $('send');
 const terminalEl = $('terminal');
-const BASE_TITLE = 'Claude Harness';
+const BASE_TITLE = 'Agent Harness';
 
 const term = new Terminal({
   fontFamily: 'ui-monospace, Menlo, "SF Mono", Consolas, "DejaVu Sans Mono", monospace',
