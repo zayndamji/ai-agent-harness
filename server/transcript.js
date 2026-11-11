@@ -103,6 +103,22 @@ function taskNotification(text) {
   };
 }
 
+// What arrives while a turn runs is folded into that turn ("absorbed_mid_turn"):
+// Claude Code then writes only a `queued_command` attachment, no user line.
+// A finished agent's or command's notice comes this way, and so does a
+// message typed meanwhile. Agents' hand-backs (`<agent-message>`) come too;
+// their reports are read from the agent's own transcript instead.
+function absorbedEntries(attachment, base) {
+  const prompt = typeof attachment.prompt === 'string' ? attachment.prompt : '';
+  const at = base.at || attachment.timestamp;
+  const done = taskNotification(prompt);
+  if (done) return [{ ...base, at, ...done }];
+  if (attachment.commandMode === 'prompt' && attachment.origin?.kind === 'human' && !attachment.isMeta && prompt.trim()) {
+    return [{ ...base, at, kind: 'user', text: prompt, midTurn: true }];
+  }
+  return [];
+}
+
 // A message from another Claude session (its SendMessage), delivered as a
 // user line with `origin.kind: "peer"`. Its text wraps the body in
 // instructions for Claude; `origin.body` is what the other session sent.
@@ -158,6 +174,7 @@ function toEntries(line, { sidechain = false } = {}) {
   if (line.type === 'queue-operation' && line.operation === 'enqueue' && typeof line.content === 'string' && !line.content.startsWith('<')) {
     return [{ ...base, kind: 'queued', text: line.content }];
   }
+  if (line.type === 'attachment' && line.attachment?.type === 'queued_command') return absorbedEntries(line.attachment, base);
   const content = line.message?.content;
   if (line.type === 'user') {
     if (line.isCompactSummary) return [{ ...base, kind: 'compact-summary', text: clip(resultText(content)) }];
@@ -217,6 +234,7 @@ class TranscriptFollower extends EventEmitter {
     this.mayFollow = mayFollow;
     this.dir = projectDir(cwd);
     this.entries = [];
+    this.notices = new Set();
     this.meta = emptyMeta();
     this.busy = false;
     this.file = null;
@@ -259,6 +277,7 @@ class TranscriptFollower extends EventEmitter {
   setEntries(entries) {
     this.entries = entries;
     this.recentCommands = [];
+    this.notices = new Set();
     this.lastMessageId = null;
     this.turnTokens = 0;
     this.meta = emptyMeta();
@@ -377,12 +396,19 @@ class TranscriptFollower extends EventEmitter {
         } else {
           this.recentCommands = [];
         }
+        // The same notice could reach the transcript both as an attachment
+        // and as a user line; draw it once.
+        if (entry.kind === 'task-done') {
+          const key = [entry.taskId, entry.toolUseId, entry.status, entry.summary, entry.usage].join('\n');
+          if (this.notices.has(key)) continue;
+          this.notices.add(key);
+        }
         entry.id = `${line.uuid || this.main.offset}:${added.length}`;
         // A message from another session tells which session has which name.
         if (entry.kind === 'peer-message' && entry.name && entry.pid && this.isCurrent(line)) this.emit('peer', { pid: entry.pid, name: entry.name });
         // Claude Code answers a shell command and a peer's message too, so
-        // they start a turn.
-        if (entry.kind === 'user' || entry.kind === 'shell' || entry.kind === 'peer-message') {
+        // they start a turn. A message folded into a running turn doesn't.
+        if ((entry.kind === 'user' && !entry.midTurn) || entry.kind === 'shell' || entry.kind === 'peer-message') {
           this.turnTokens = 0;
           this.setBusy(true);
         }

@@ -271,11 +271,18 @@ export class ChatView {
     const stick = this.nearBottom();
     const changed = new Set();
     for (const entry of entries) {
-      const node = this.render(entry, live);
+      // One entry the page can't draw must not stop the rest of the batch.
+      let node = null;
+      try {
+        node = this.render(entry, live);
+      } catch (err) {
+        console.error('Could not draw a chat entry', entry.kind, err);
+      }
       // A result or agent step changes a card that may sit in a group.
-      const card = this.tools.get(entry.toolUseId) || this.tools.get(entry.parentToolUseId) || this.agentCards.get(entry.agentId);
-      const owner = card?.node?.closest('.steps');
-      if (owner) changed.add(owner);
+      for (const card of [this.tools.get(entry.toolUseId), this.tools.get(entry.parentToolUseId), this.agentCards.get(entry.agentId), this.agentCards.get(entry.taskId)]) {
+        const owner = card?.node?.closest('.steps');
+        if (owner) changed.add(owner);
+      }
       if (!node) continue;
       this.empty.hidden = true;
       const group = this.place(node);
@@ -661,7 +668,10 @@ export class ChatView {
 
   // A background command or agent finished: update its card, and say so.
   taskDone(entry) {
-    const card = this.tools.get(entry.toolUseId);
+    // An agent Claude resumed with SendMessage notifies with that message's
+    // tool call; its task id is still the agent's id.
+    let card = this.tools.get(entry.toolUseId);
+    if (!card?.body) card = this.agentCards.get(entry.taskId) || null;
     const failed = /fail|error|kill/i.test(entry.status);
     if (card) {
       card.node.dataset.state = failed ? 'error' : 'done';
