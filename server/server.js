@@ -410,7 +410,7 @@ function startSlot(client, msg) {
     return fail(`${MAX_SESSIONS} sessions are running, the most allowed. Stop one to start another.`);
   }
   const slot = createSlot();
-  knownIds.add(start.sessionId);
+  if (start.sessionId) knownIds.add(start.sessionId);
   try {
     slot.start(start, msg.cols, msg.rows);
   } catch (err) {

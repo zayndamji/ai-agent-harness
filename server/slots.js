@@ -9,11 +9,11 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { Session } = require('./session');
-const { TranscriptFollower, listSessions } = require('./transcript');
+const { TranscriptFollower, listSessions, processSessionId } = require('./transcript');
 const { readStatus, readInputBox } = require('./screen');
-const { Typist, graphemes, KEY_GAP } = require('./typist');
+const { Typist, graphemes, human, typeGap, lookGap } = require('./typist');
 
-const ANSWER_GAP = 60; // ms between arrow keys in a dialog
+const ARROW = [200, 70]; // ms between arrow key presses in a dialog: average, spread
 const SETTLE = 200; // ms for Claude Code to redraw before the screen is read again
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -33,12 +33,14 @@ function isSwitchCommand(text) {
 // How long after such a command its session may take over a transcript: the
 // /resume picker can stay open a while.
 const SWITCH_WINDOW_MS = 10 * 60 * 1000;
+// How long a new session may take to record its id.
+const LEARN_ID_MS = 20_000;
 
 // start {folder?, resume?}: folder is relative to the workspace; resume is
 // 'latest', a session id from that folder, or absent for a new session.
 // Returns the folder and the session id to run, or throws StartError with a
-// message for the browser. New sessions get an id from the server
-// (--session-id), so the Chat tab follows exactly that transcript.
+// message for the browser. A new session runs plain `claude`, which picks
+// its own id (sessionId null here); the slot learns it afterwards.
 function resolveStart(files, { folder: wanted, resume }) {
   let folder;
   try {
@@ -50,7 +52,7 @@ function resolveStart(files, { folder: wanted, resume }) {
   if (sessionId === 'latest') sessionId = listSessions(folder.real)[0]?.id;
   if (sessionId && !UUID.test(sessionId)) throw new StartError('That session id is not valid.');
   if (sessionId && !listSessions(folder.real).some((s) => s.id === sessionId)) throw new StartError('That session is not in this folder.');
-  return { folder, sessionId: sessionId || crypto.randomUUID(), resuming: Boolean(sessionId) };
+  return { folder, sessionId: sessionId || null, resuming: Boolean(sessionId) };
 }
 
 // Messages to the browsers attached to a slot are emitted as 'message'; the
@@ -210,21 +212,48 @@ class Slot extends EventEmitter {
   // Starts `claude` for a start resolved by resolveStart(). Throws
   // StartError with a message for the browser.
   start({ folder, sessionId, resuming }, cols, rows) {
-    const args = [...this.args, ...(resuming ? ['--resume', sessionId] : ['--session-id', sessionId])];
+    // As a person starts it: `claude`, or `claude --resume <id>` as Claude
+    // Code itself suggests when a session ends.
+    const args = [...this.args, ...(resuming ? ['--resume', sessionId] : [])];
     try {
       this.folder = folder.rel;
       this.folderReal = folder.real;
       const stat = fs.statSync(folder.real);
       this.folderId = `${stat.dev}:${stat.ino}`;
       // A little slack, so a transcript created in the same second still counts.
-      this.transcript.start(Date.now() - 2000, { cwd: folder.real, sessionId });
+      this.transcript.start(Date.now() - 2000, { cwd: folder.real, sessionId, waitForId: !resuming });
       this.session.start(cols, rows, { cwd: folder.real, args });
+      if (!resuming) this.learnSessionId();
     } catch (err) {
       this.transcript.stop();
       console.error('could not start claude:', err.message);
       throw new StartError(`Could not start claude: ${err.message}`);
     }
-    console.log(`claude started in slot ${this.sid}, /${folder.rel || ''} (${resuming ? `resuming ${sessionId}` : `new ${sessionId}`}, ${cols}x${rows})`);
+    console.log(`claude started in slot ${this.sid}, /${folder.rel || ''} (${resuming ? `resuming ${sessionId}` : 'new'}, ${cols}x${rows})`);
+  }
+
+  // A new session's id, from the record Claude Code keeps for its process.
+  // Without one after a while, the Chat tab follows the newest transcript in
+  // the folder instead.
+  learnSessionId() {
+    const pid = this.pid;
+    const until = Date.now() + LEARN_ID_MS;
+    const look = () => {
+      if (!this.running || this.pid !== pid) return;
+      const id = processSessionId(pid);
+      if (id && UUID.test(id)) {
+        this.transcript.setSessionId(id);
+        console.log(`slot ${this.sid} is session ${id}`);
+      } else if (Date.now() < until) {
+        return setTimeout(look, 250);
+      } else {
+        this.transcript.setSessionId(null);
+        console.log(`slot ${this.sid}: no session id from claude, following the newest transcript`);
+      }
+      this.send(this.state());
+      this.emit('changed');
+    };
+    look();
   }
 
   stop() {
@@ -348,12 +377,12 @@ class Slot extends EventEmitter {
     });
   }
 
-  // Writes keys one at a time, `gap` ms apart. False if the session ended.
+  // Writes keys one at a time, `gap()` ms apart. False if the session ended.
   async pressKeys(keys, gap) {
     for (const key of keys) {
+      await sleep(gap());
       if (!this.running) return false;
       this.session.write(key);
-      await sleep(gap);
     }
     return this.running;
   }
@@ -376,7 +405,7 @@ class Slot extends EventEmitter {
     const app = mirror.modes.applicationCursorKeysMode;
     const delta = option.n - dialog.selected;
     const arrow = delta > 0 ? (app ? '\x1bOB' : '\x1b[B') : app ? '\x1bOA' : '\x1b[A';
-    if (!(await this.pressKeys(Array(Math.abs(delta)).fill(arrow), ANSWER_GAP))) return null;
+    if (!(await this.pressKeys(Array(Math.abs(delta)).fill(arrow), () => human(ARROW)))) return null;
 
     // Look before pressing on: the same question, with the highlight on the
     // chosen line. "Type something." may turn into a text box and lose its
@@ -388,10 +417,9 @@ class Slot extends EventEmitter {
     if (!now || now.question !== msg.question) return 'The question on screen changed. Check the Terminal tab.';
     if (now.selected !== option.n && !(free && now.selected === null)) return stray;
 
-    if (free) {
-      if (!(await this.pressKeys(graphemes(text), KEY_GAP))) return null;
-      await sleep(SETTLE);
-    }
+    if (free && !(await this.pressKeys(graphemes(text), typeGap))) return null;
+    // A glance at the choice (or the typed answer) before Enter.
+    await sleep(lookGap());
     if (!this.running) return null;
     this.session.write('\r');
     console.log(`answered "${dialog.question.slice(0, 60)}" with ${option.n}. ${option.label.slice(0, 40)}`);

@@ -17,6 +17,18 @@ const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
 
 // Claude Code names a project's folder after its path, with every character
 // that isn't a letter or digit replaced by a dash: /workspace is -workspace.
+// Claude Code records each running process in sessions/<pid>.json in its
+// config folder, with the id of the conversation it is writing.
+function processSessionId(pid) {
+  const config = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(config, 'sessions', `${pid}.json`), 'utf8'));
+    return record.pid === pid && typeof record.sessionId === 'string' ? record.sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
 function projectDir(cwd) {
   const config = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
   return path.join(config, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -241,19 +253,29 @@ class TranscriptFollower extends EventEmitter {
     this.timer = null;
   }
 
-  // Follows the session's own transcript, `<sessionId>.jsonl`, which the
-  // server chose (new sessions) or Claude Code appends to (resumed ones).
+  // Follows the session's own transcript, `<sessionId>.jsonl`, which Claude
+  // Code writes. A resumed session's id is known at the start; a new one's
+  // comes from setSessionId() once Claude Code has picked it, and until then
+  // nothing is followed (`waitForId`), so no other session's file is taken.
   // After /clear or /resume inside the session, Claude Code writes another
   // file in the same folder, and the follower switches to the newest one.
-  start(sinceMs, { cwd, sessionId } = {}) {
+  start(sinceMs, { cwd, sessionId, waitForId = false } = {}) {
     this.stop();
     if (cwd) this.dir = projectDir(cwd);
     this.since = sinceMs;
     this.sessionId = sessionId || null;
+    this.waiting = waitForId && !this.sessionId;
     this.file = null;
     this.agents = new Map();
     this.setEntries([]);
     this.timer = setInterval(() => this.poll(), POLL_MS);
+  }
+
+  // The new session's id, or null to follow the newest file in the folder
+  // when it couldn't be learned.
+  setSessionId(id) {
+    this.sessionId = id || null;
+    this.waiting = false;
   }
 
   // Whether a line was written since this session started, not earlier in a
@@ -373,6 +395,7 @@ class TranscriptFollower extends EventEmitter {
   }
 
   poll() {
+    if (this.waiting) return;
     const file = this.newestFile();
     if (!file) return;
     if (file !== this.file) {
@@ -598,4 +621,4 @@ function countSessions(cwd) {
   }
 }
 
-module.exports = { TranscriptFollower, toEntries, listSessions, listAllSessions, countSessions, projectDir, peerPid };
+module.exports = { TranscriptFollower, processSessionId, toEntries, listSessions, listAllSessions, countSessions, projectDir, peerPid };
