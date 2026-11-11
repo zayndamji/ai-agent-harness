@@ -7,3 +7,4 @@ workspaces
 .env
 .env.*
 *.md
+!container-memory.md

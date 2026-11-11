@@ -43,6 +43,11 @@ COPY --from=server-deps /opt/harness/node_modules /opt/harness/node_modules
 COPY install-addons.sh addons.example.conf addons.con[f] /tmp/addons/
 RUN sh /tmp/addons/install-addons.sh /tmp/addons/addons.conf && rm -rf /tmp/addons
 
+# Claude Code's managed memory: every session in the container reads it, and
+# no project can turn it off. It says Claude runs in this sandbox, asks for
+# tools it can't install, and names the addons.conf line for ones it can.
+COPY container-memory.md /etc/claude-code/CLAUDE.md
+
 WORKDIR /opt/harness
 COPY server/ ./
 

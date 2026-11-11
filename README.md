@@ -20,6 +20,7 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - Works in one folder on the host that you choose (`HARNESS_WORKSPACE`, `~/SandboxedWorkspace` by default). Move a project into it to work on it, and move it back out when you're done. Claude Code's login and history are kept in its `.claude-home` folder, which sessions don't see in `/workspace`.
 - Puts a password in front of the web UI.
 - Builds in only what the harness and Claude Code need. Extra tools come from your own `addons.conf`.
+- Tells every session it runs in this container: Claude asks you to add a tool it can't install, and gives the `addons.conf` line for one it installs itself.
 
 ## How it works
 
@@ -39,6 +40,7 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 | `Dockerfile` | The image: Claude Code CLI, ccusage, git, ripgrep, the server, non-root user |
 | `addons.example.conf` | Example add-ons: extra tools built into the image (copy to `addons.conf`) |
 | `install-addons.sh` | Installs the add-ons in `addons.conf` while the image builds |
+| `container-memory.md` | What every session is told about the container, built in as Claude Code's managed `CLAUDE.md` |
 | `compose.yaml` | The `web` and `claude` services, their folders and security options |
 | `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: workspace folder, password, address, port, `claude` arguments |
@@ -61,7 +63,7 @@ Open the address `./start.sh` prints (http://127.0.0.1:28471 by default), log in
 
 To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. A session whose folder is moved out, renamed or removed ends the next time you type into it or open it. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
 
-Tools for every session go in `addons.conf`, one line per installer (`apt:`, `npm:` or `pip:`) followed by package names. The next `./start.sh` rebuilds the image with them. Tools you install from a session (`npm install -g`, `pip install --user`, programs in `~/.local/bin`) are kept in `.claude-home`.
+Tools for every session go in `addons.conf`, one line per installer (`apt:`, `npm:` or `pip:`) followed by package names. The next `./start.sh` rebuilds the image with them. Tools you install from a session (`npm install -g`, `pip install --user`, programs in `~/.local/bin`) are kept in `.claude-home`. Every session reads `container-memory.md` (copied to `/etc/claude-code/CLAUDE.md`), so when Claude needs a tool it can't install without root, it stops and gives you the line to add. When it installs one itself, it gives you the line too, so you can build it in.
 
 ⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
