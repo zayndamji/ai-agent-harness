@@ -333,6 +333,7 @@ function attach(client, sid) {
     return;
   }
   slot.checkFolder();
+  slot.driver = client;
   slot.snapshot((messages) => {
     if (client.readyState !== client.OPEN || client.attachGen !== gen) return;
     for (const message of messages) client.send(JSON.stringify({ ...message, sid: slot.sid }));
@@ -432,6 +433,24 @@ setInterval(() => {
 
 const size = (n) => Number.isInteger(n) && n >= 2 && n <= 1000;
 
+// A terminal's answers to Claude Code's queries: device attributes
+// (CSI ? … c, CSI > … c), mode reports (CSI ? … $ y), keyboard flags
+// (CSI ? … u), and DCS or OSC strings (XTVERSION, colours). No key or paste
+// sends these shapes (a paste comes wrapped in CSI 200~).
+const REPLY = /^(?:\x1b\[[?>][\d;]*c|\x1b\[\?[\d;]*\$y|\x1b\[\?\d*u|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
+
+// Every browser showing a session runs its own terminal, and each would
+// answer Claude Code's queries; one real terminal answers once. So only the
+// session's driver answers: the browser that typed into it last, or else
+// attached to it last. Keys, pastes and mouse from any of them go through.
+function terminalInput(client, slot, data) {
+  const reply = REPLY.test(data);
+  if (!reply) slot.driver = client;
+  else if (slot.driver && slot.driver !== client && slot.driver.readyState === slot.driver.OPEN && slot.driver.sid === slot.sid) return;
+  else slot.driver = client;
+  slot.input(data, { reply });
+}
+
 function handleMessage(client, raw) {
   let msg;
   try {
@@ -447,19 +466,9 @@ function handleMessage(client, raw) {
   // Everything else acts on one slot, named by `sid`.
   const slot = slots.get(msg.sid);
   if (!slot) return;
-  const reply = (message) => sendTo(client, { ...message, sid: slot.sid });
   switch (msg.type) {
     case 'input':
-      if (typeof msg.data === 'string') slot.input(msg.data);
-      return;
-    case 'compose':
-      slot.compose(msg.text, msg.caret, msg.paste);
-      return;
-    case 'submit':
-      slot.submit(msg.text, (message) => reply({ type: 'send-failed', message, text: msg.text }));
-      return;
-    case 'answer':
-      slot.answer(msg, (message) => reply({ type: 'answer-failed', message }));
+      if (typeof msg.data === 'string') terminalInput(client, slot, msg.data);
       return;
     case 'resize':
       if (size(msg.cols) && size(msg.rows)) slot.resize(msg.cols, msg.rows);

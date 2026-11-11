@@ -1,6 +1,7 @@
-// Browser side: draws the session's terminal with xterm.js, shows its
-// transcript in the Chat tab, and sends keystrokes, messages and size
-// changes back over the WebSocket.
+// Browser side: draws the session's terminal with xterm.js and sends what
+// it sends (keys, pastes, mouse, its answers to queries) and size changes back
+// over the WebSocket, as a terminal does. The Chat tab shows the transcript,
+// read only: the Terminal tab is the one way to talk to Claude Code.
 import { Terminal } from '/vendor/xterm.mjs';
 import { FitAddon } from '/vendor/addon-fit.mjs';
 import { ChatView, tokens, edgeFade } from '/chat.js';
@@ -18,8 +19,6 @@ const idle = $('idle');
 const idleTitle = $('idle-title');
 const idleText = $('idle-text');
 const startBtn = $('start');
-const message = $('message');
-const sendBtn = $('send');
 const terminalEl = $('terminal');
 const BASE_TITLE = 'Agent Harness';
 
@@ -73,9 +72,6 @@ let attaching = true;
 // True after New session, while the page shows the start card on purpose:
 // it then stays off the other sessions instead of opening one of them.
 let pickingNew = false;
-// What each session's message box held when the page left it. Its typist
-// has typed that much into Claude Code, so it comes back on return.
-const drafts = new Map();
 // The last `exit` seen, for the start card's title.
 let lastExit = null;
 
@@ -113,7 +109,7 @@ function sendJson(msg) {
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-// Keys, messages, answers, resizes and stop go to the slot on this page.
+// Terminal input, resizes and stop go to the slot on this page.
 function sendSlot(msg) {
   if (sid) sendJson({ ...msg, sid });
 }
@@ -198,7 +194,7 @@ function showView(next) {
   $('view-sessions').hidden = next !== 'sessions';
   $('view-usage').hidden = next !== 'usage';
   // The Files, Sessions and Usage tabs work without a session, so the idle
-  // card and the message box stay off them.
+  // card stays off them.
   document.body.classList.toggle('files-open', ['files', 'sessions', 'usage'].includes(next));
   document.body.dataset.view = next;
   store.set('harness-view', next);
@@ -208,7 +204,6 @@ function showView(next) {
     if (running) term.focus();
   } else if (next === 'chat') {
     chat.toBottom();
-    if (running) message.focus();
   } else if (next === 'files') {
     filesView.load();
   } else if (next === 'sessions') {
@@ -387,21 +382,18 @@ function renderSessionBar() {
   refreshStatus();
 }
 
-// ---- Live status from the terminal: spinner, tip, suggestion, dialogs
+// ---- Live status from the terminal: spinner, tip, dialogs
 
 function renderTui() {
   const working = isWorking();
   const waiting = running && Boolean(tui?.dialog);
-  // While a question waits, the answer box replaces the working bar.
+  // While a question waits, its banner replaces the working bar.
   $('chat-busy').hidden = !working || !running || waiting;
   $('busy-verb').textContent = tui?.spinner || 'Working…';
   $('busy-detail').textContent = tui?.detail ? `· ${tui.detail}` : '';
   $('busy-tip').hidden = !tui?.tip;
   $('busy-tip').textContent = tui?.tip ? `Tip: ${tui.tip}` : '';
   renderDialog(waiting ? tui.dialog : null);
-  const suggestion = running && !working && !message.value && tui?.suggestion;
-  $('suggestion').hidden = !suggestion;
-  $('suggestion-text').textContent = suggestion || '';
   renderSessionBar();
 }
 
@@ -414,9 +406,8 @@ function onTui(status) {
   renderTui();
 }
 
-// The question on screen, with its choices as buttons. A click sends the
-// server the choice; the server moves the highlight there with the arrow keys
-// and presses Enter, as a person would in the Terminal tab.
+// The question on screen and its choices, to read. It is answered in the
+// Terminal tab, like any terminal prompt.
 let dialogKey = null;
 function renderDialog(dialog) {
   const banner = $('dialog-banner');
@@ -425,24 +416,22 @@ function renderDialog(dialog) {
     dialogKey = null;
     return;
   }
-  const key = JSON.stringify([dialog.question, dialog.options.map((o) => o.label), dialog.answerable]);
+  const key = JSON.stringify([dialog.question, dialog.options.map((o) => o.label), dialog.selected]);
   if (key === dialogKey) return;
   dialogKey = key;
   $('dialog-text').textContent = dialog.question;
-  $('dialog-error').hidden = true;
   const box = $('dialog-options');
   box.replaceChildren();
   for (const option of dialog.options) {
-    const free = option.n === dialog.freeText;
-    const row = document.createElement(free ? 'div' : 'button');
+    const row = document.createElement('div');
     row.className = 'dialog-option';
-    if (!free) row.type = 'button';
+    row.classList.toggle('selected', option.n === dialog.selected);
     const num = document.createElement('span');
     num.className = 'dialog-num';
     num.textContent = option.n;
     const text = document.createElement('span');
     text.className = 'dialog-label';
-    text.textContent = free ? 'Your own answer' : option.label;
+    text.textContent = option.label;
     row.append(num, text);
     if (option.description) {
       const desc = document.createElement('span');
@@ -450,46 +439,10 @@ function renderDialog(dialog) {
       desc.textContent = option.description;
       text.append(desc);
     }
-    if (free) {
-      const input = document.createElement('input');
-      input.className = 'dialog-input';
-      input.placeholder = 'Type an answer';
-      const send = document.createElement('button');
-      send.type = 'button';
-      send.className = 'small';
-      send.textContent = 'Send';
-      const go = () => input.value.trim() && answer(dialog, option, input.value);
-      send.addEventListener('click', go);
-      input.addEventListener('keydown', (e) => e.key === 'Enter' && (e.preventDefault(), go()));
-      input.disabled = send.disabled = !dialog.answerable;
-      row.append(input, send);
-    } else {
-      row.disabled = !dialog.answerable;
-      row.addEventListener('click', () => answer(dialog, option));
-    }
     box.append(row);
   }
-  if (dialog.options.length && !dialog.answerable) showDialogError('This one can only be answered in the Terminal tab.');
 }
 
-function answer(dialog, option, text) {
-  for (const b of $('dialog-options').querySelectorAll('button, input')) b.disabled = true;
-  showDialogError(`Sending “${option.n === dialog.freeText ? text : option.label}”…`, true);
-  sendSlot({ type: 'answer', question: dialog.question, option: option.n, text });
-}
-
-function showDialogError(text, quiet) {
-  const node = $('dialog-error');
-  node.hidden = false;
-  node.textContent = text;
-  node.classList.toggle('quiet', Boolean(quiet));
-}
-
-$('suggestion-text').addEventListener('click', () => {
-  message.value = tui?.suggestion || '';
-  message.dispatchEvent(new Event('input'));
-  message.focus();
-});
 $('dialog-open').addEventListener('click', () => showView('terminal'));
 
 // ---- Session state
@@ -510,12 +463,9 @@ function showState(isRunning) {
   const started = isRunning && !running;
   running = isRunning;
   idle.hidden = isRunning;
-  message.disabled = !isRunning;
-  sendBtn.disabled = !isRunning;
-  message.placeholder = isRunning ? 'Message Claude' : 'Start a session to send messages';
   if (!isRunning) renderIdle();
   // Only when a session starts: a state update mid-session (a new title, a
-  // switched transcript) must not pull focus out of the message box.
+  // switched transcript) must not move the focus.
   if (started && view === 'terminal') term.focus();
   renderTui();
 }
@@ -538,12 +488,6 @@ function connect() {
         onSlots(msg.slots);
         break;
       case 'attached':
-        if (msg.sid !== sid) {
-          if (sid) drafts.set(sid, message.value);
-          message.value = drafts.get(msg.sid) || '';
-          drafts.delete(msg.sid);
-          fitMessageBox();
-        }
         sid = msg.sid;
         attaching = false;
         if (sid) pickingNew = false;
@@ -594,20 +538,6 @@ function connect() {
       case 'tui':
         onTui(msg.status);
         break;
-      case 'send-failed':
-        // Nothing reached Claude: give the text back and say why.
-        chat.settlePending(msg.text);
-        if (!message.value) {
-          message.value = msg.text;
-          message.dispatchEvent(new Event('input'));
-        }
-        notice('Message not sent', msg.message);
-        break;
-      case 'answer-failed':
-        dialogKey = null;
-        renderTui();
-        showDialogError(msg.message);
-        break;
     }
   };
   ws.onclose = async (event) => {
@@ -622,6 +552,8 @@ function connect() {
   };
 }
 
+// Everything the terminal sends, as it sends it: keys, pastes (bracketed when
+// Claude Code asks), mouse and focus reports, and answers to its queries.
 term.onData((data) => sendSlot({ type: 'input', data }));
 term.onResize(({ cols, rows }) => {
   if (running) sendSlot({ type: 'resize', cols, rows });
@@ -655,54 +587,5 @@ function startSession({ folder = '', resume } = {}) {
 startBtn.addEventListener('click', () => startSession({ folder: '' }));
 $('choose-folder').addEventListener('click', () => showView('files'));
 $('choose-session').addEventListener('click', () => showView('sessions'));
-
-// Escape is how Claude Code's terminal interrupts a turn.
-$('interrupt').addEventListener('click', () => sendSlot({ type: 'input', data: '\x1b' }));
-
-// ---- Message box, shared by both tabs. Every change goes to the server,
-// which types it into Claude Code's input box key by key (server/typist.js);
-// Send then presses Enter there, or pastes the message when it couldn't be typed.
-
-function compose(event) {
-  if (!running || event?.isComposing) return;
-  const paste = ['insertFromPaste', 'insertFromDrop', 'insertFromPasteAsQuotation'].includes(event?.inputType);
-  sendSlot({ type: 'compose', text: message.value, caret: message.selectionEnd, paste });
-}
-
-function sendMessage() {
-  const text = message.value;
-  if (!text.trim() || !running) return;
-  sendSlot({ type: 'submit', text });
-  if (!text.trim().startsWith('/')) chat.addPending(text, busy);
-  message.value = '';
-  message.style.height = '';
-  renderTui();
-}
-
-$('composer').addEventListener('submit', (event) => {
-  event.preventDefault();
-  sendMessage();
-});
-message.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault();
-    sendMessage();
-  }
-});
-function fitMessageBox() {
-  message.style.height = '';
-  message.style.height = `${message.scrollHeight}px`;
-  // A scroll bar only once the box reaches its tallest.
-  message.style.overflowY = message.scrollHeight > 200 ? 'auto' : 'hidden';
-}
-
-message.addEventListener('input', (event) => {
-  compose(event);
-  fitMessageBox();
-  $('suggestion').hidden = Boolean(message.value) || $('suggestion').hidden;
-});
-
-// Text from an input method (accents, Chinese, Japanese) counts once it's committed.
-message.addEventListener('compositionend', () => compose());
 
 connect();

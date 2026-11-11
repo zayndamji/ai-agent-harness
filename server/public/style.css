@@ -161,7 +161,7 @@ body.login {
 
 body.app {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   height: 100dvh;
 }
 
@@ -237,7 +237,6 @@ body.app {
   .tabs::-webkit-scrollbar { display: none; }
   .tabs button { flex: none; padding: 6px 9px; font-size: 12.5px; }
   .session-bar, .tasks > details, .chat-scroll { padding-left: 14px; padding-right: 14px; }
-  .composer-wrap { padding: 8px 10px 10px; }
 }
 
 .stage { position: relative; min-height: 0; }
@@ -707,8 +706,7 @@ button.peer-link:hover { background: transparent; color: var(--accent-hover); }
   font: 400 13.5px/1.35 var(--sans);
   text-align: left;
 }
-button.dialog-option:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
-.dialog-option:disabled { opacity: 0.55; }
+.dialog-option.selected { border-color: var(--accent); }
 .dialog-num {
   flex: none;
   display: grid;
@@ -722,19 +720,6 @@ button.dialog-option:hover:not(:disabled) { border-color: var(--accent); backgro
 }
 .dialog-label { flex: 1; min-width: 0; display: grid; gap: 2px; }
 .dialog-desc { color: var(--muted); font-size: 12px; }
-.dialog-input {
-  flex: 2;
-  min-width: 0;
-  font: inherit;
-  padding: 6px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: 7px;
-  background: var(--bg);
-  color: var(--text);
-}
-.dialog-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
-.dialog-error { margin-top: 8px; font-size: 12.5px; color: var(--danger); }
-.dialog-error.quiet { color: var(--muted); }
 
 .working {
   display: flex;
@@ -773,7 +758,7 @@ button.dialog-option:hover:not(:disabled) { border-color: var(--accent); backgro
 
 /* Files */
 
-body.files-open .idle, body.files-open .composer-wrap { display: none; }
+body.files-open .idle { display: none; }
 .files-view { display: flex; flex-direction: column; background: var(--bg); }
 .files-toolbar {
   display: flex;
@@ -999,56 +984,6 @@ body.files-open .idle, body.files-open .composer-wrap { display: none; }
   .files-toolbar .ghost span { display: none; }
 }
 
-/* Composer */
-
-.composer-wrap {
-  padding: 8px 16px 10px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-raised);
-}
-.suggestion { display: flex; align-items: center; gap: 8px; max-width: 780px; margin: 0 auto 8px; font-size: 12px; }
-.suggestion-chip {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-  padding: 5px 10px;
-  border-radius: 999px;
-  background: var(--bg-sunken);
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  font-weight: 400;
-}
-.suggestion-chip:hover { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
-.composer {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  max-width: 780px;
-  margin: 0 auto;
-  padding: 6px 6px 6px 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: 14px;
-  background: var(--bg);
-}
-.composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent); }
-.composer textarea {
-  flex: 1;
-  overflow-y: hidden;
-  resize: none;
-  max-height: 200px;
-  padding: 7px 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text);
-  font: 14px/1.45 var(--sans);
-}
-.send { width: 34px; height: 34px; padding: 0; border-radius: 10px; }
-.composer-hint { max-width: 780px; margin: 6px auto 0; font-size: 11px; text-align: center; }
-@media (max-width: 640px) { .composer-hint { display: none; } }
-
 /* In-page dialogs (dialog.js) */
 
 .modal {
@@ -1170,7 +1105,6 @@ button.danger:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
 }
 @media (min-width: 1000px) {
   body.jobs-open .chat-view { padding-right: 400px; }
-  body.jobs-open[data-view="chat"] .composer-wrap { padding-right: 416px; }
   .jobs-panel { box-shadow: none; }
 }
 .jobs-head {
@@ -1396,7 +1330,6 @@ button.rank-row:hover { background: var(--bg-sunken); }
 body.app { grid-template-columns: auto minmax(0, 1fr); }
 body.app > .bar { grid-column: 2; grid-row: 1; }
 body.app > .stage { grid-column: 2; grid-row: 2; }
-body.app > .composer-wrap { grid-column: 2; grid-row: 3; }
 .sidebar {
   grid-column: 1;
   grid-row: 1 / -1;

@@ -93,11 +93,10 @@
       <div id="dialog-banner" class="banner" hidden>
         <div class="banner-head">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-          <div class="banner-text"><strong>Claude is waiting for your answer</strong><span id="dialog-text"></span></div>
+          <div class="banner-text"><strong>Claude is waiting for your answer in the Terminal tab</strong><span id="dialog-text"></span></div>
           <button id="dialog-open" type="button" class="ghost small">Open Terminal</button>
         </div>
         <div id="dialog-options" class="dialog-options"></div>
-        <div id="dialog-error" class="dialog-error" hidden></div>
       </div>
 
       <div id="chat-busy" class="working" hidden>
@@ -106,7 +105,6 @@
           <div><span id="busy-verb">Working…</span> <span id="busy-detail" class="muted"></span></div>
           <div id="busy-tip" class="tip" hidden></div>
         </div>
-        <button id="interrupt" type="button" class="ghost small" title="Interrupt (Esc)">Interrupt</button>
       </div>
       <aside id="jobs-panel" class="jobs-panel" hidden aria-label="Background commands and agents"></aside>
     </section>
@@ -133,18 +131,5 @@
     </div>
   </main>
 
-  <footer class="composer-wrap">
-    <div id="suggestion" class="suggestion" hidden>
-      <span class="muted">Suggested</span>
-      <button id="suggestion-text" type="button" class="suggestion-chip"></button>
-    </div>
-    <form id="composer" class="composer">
-      <textarea id="message" rows="1" placeholder="Message Claude" disabled></textarea>
-      <button id="send" type="submit" class="send" disabled title="Send (Enter)" aria-label="Send">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-      </button>
-    </form>
-    <div class="composer-hint muted">Enter sends · Shift+Enter adds a line · Esc in the terminal interrupts</div>
-  </footer>
 </body>
 </html>

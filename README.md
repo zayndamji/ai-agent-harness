@@ -5,11 +5,9 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 ## What it does
 
 - Runs several Claude Code sessions at once, listed in a sidebar with what each is doing: working, waiting for your answer, or ready.
-- Sends your keystrokes and messages to the session and streams its output back.
-- Types what you write in the message box into Claude Code as you type it, key by key at a person's pace, like someone at the terminal, and pastes it on Send when it can't be typed exactly.
-- Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results. A run of tool calls folds into one line that opens to show each call.
-- In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, long pasted messages folded to their first lines, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
-- Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
+- Gives you the real Claude Code terminal in the browser: what you type, paste or click there goes to the session unchanged, as from a terminal on your own machine.
+- Shows the session two ways: the real terminal, where you talk to Claude, and a read-only Chat tab with messages, tool calls and results. A run of tool calls folds into one line that opens to show each call.
+- In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, long pasted messages folded to their first lines, the session's title, model, mode and context size, Claude's live status line, and a banner with the question and its choices when Claude waits for an answer in the terminal.
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
 - Notifies you when Claude finishes or needs an answer in any session while the tab is in the background.
 - Shows messages sessions send each other with Claude Code's own SendMessage, as cards in the Chat tab that link to the other session.
@@ -28,11 +26,11 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - A Docker image holds the `claude` CLI and the server (`server/`).
 - The server runs each session's `claude` in its own pseudo-terminal and streams the one a browser is looking at over a WebSocket.
 - The browser draws the terminal with xterm.js. Keys typed in the terminal go back to `claude`.
-- Each change in the message box goes to the server, which presses the same keys in Claude Code's input box (characters, Backspace, arrow keys, a paste) one at a time, with random human-speed gaps, and checks the box on screen afterwards. Send presses Enter.
+- The browser's terminal sends what it would send in any terminal app (keys, pastes, mouse and focus reports, answers to Claude Code's queries), and the server writes it to `claude` as it arrives. When several browsers show one session, only the one typed into last answers the queries.
 - Each session starts as plain `claude`, or `claude --resume <id>` to resume, and the server reads the new conversation's id from the record Claude Code keeps for its process.
 - A copy of the screen on the server lets a browser that connects later, or reloads, see where the session is.
-- The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears. Messages sent from it go into the same terminal.
-- The live status line, suggestions and dialogs are read from the server's copy of the screen.
+- The Chat tab follows the transcript Claude Code writes for the session and renders each entry as it appears.
+- The live status line and dialogs are read from the server's copy of the screen.
 
 ## Repository layout
 
@@ -42,7 +40,7 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 | `addons.example.conf` | Example add-ons: extra tools built into the image (copy to `addons.conf`) |
 | `install-addons.sh` | Installs the add-ons in `addons.conf` while the image builds |
 | `compose.yaml` | The `web` and `claude` services, their folders and security options |
-| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
+| `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: workspace folder, password, address, port, `claude` arguments |
 
 ## Run the web UI
@@ -69,7 +67,7 @@ Tools for every session go in `addons.conf`, one line per installer (`apt:`, `np
 
 ⚠️ `.claude-home` holds your Claude login token in a plain file. Keep the workspace folder out of cloud sync and shared folders.
 
-Sign in with your own Claude account, and keep the web UI to yourself. Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) don't let you share an account or make it available to anyone else, so use `--lan` only to reach the web UI from your own devices. The harness runs the unmodified `claude` from npm, and Claude Code handles the login itself. Everything the harness sends to a session starts with something you did in the page, typed into the terminal one key at a time.
+Sign in with your own Claude account, and keep the web UI to yourself. Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) don't let you share an account or make it available to anyone else, so use `--lan` only to reach the web UI from your own devices. The harness runs the unmodified `claude` from npm, and Claude Code handles the login itself. The only input a session gets is what you type, paste or click in its terminal.
 
 Only this computer can open the web UI, unless you start it with `./start.sh --lan`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 
@@ -104,13 +102,13 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 
 - Done when: the browser starts a session, sends messages and shows output, behind a password.
 - ✅ Server that spawns `claude` in a PTY (`server/session.js`)
-- ✅ Browser page with xterm.js, a Start session button and a message box (`server/public/`)
+- ✅ Browser page with xterm.js and a Start session button (`server/public/`)
 - ✅ Password login (`server/server.js`)
 - ✅ A signed-in session answering a message from the web UI
 - ✅ Chat tab with messages, tool calls and results (`server/transcript.js`, `server/public/chat.js`)
 - ✅ Start or resume a session in any workspace folder, and a Sessions tab across all folders (`server/public/files.js`, `server/public/sessions.js`)
 - ✅ A session ends when its folder is moved out of the workspace or removed (`server/slots.js`)
-- ✅ Answer questions from the Chat tab, and a Background panel for agents and background commands (`server/screen.js`, `server/public/jobs.js`)
+- ✅ Questions shown in the Chat tab, and a Background panel for agents and background commands (`server/screen.js`, `server/public/jobs.js`)
 - ✅ Usage tab from ccusage, offline (`server/usage.js`, `server/public/usage-view.js`)
 
 ### Several sessions with message passing
