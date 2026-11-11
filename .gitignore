@@ -27,3 +27,6 @@ AGENTS.md
 
 # Each person's Claude Code settings
 .claude/settings.local.json
+
+# Your add-ons for the container (see addons.example.conf)
+addons.conf

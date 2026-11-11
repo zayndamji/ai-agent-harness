@@ -21,6 +21,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Keeps sessions running when the browser closes, and shows the current screen when you come back. Each browser tab can show a different session.
 - Works in one folder on the host that you choose (`HARNESS_WORKSPACE`, `~/SandboxedWorkspace` by default). Move a project into it to work on it, and move it back out when you're done. Claude Code's login and history are kept in its `.claude-home` folder, which sessions don't see in `/workspace`.
 - Puts a password in front of the web UI.
+- Builds in only what the harness and Claude Code need. Extra tools come from your own `addons.conf`.
 
 ## How it works
 
@@ -36,7 +37,9 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 
 | Path | What it holds |
 | --- | --- |
-| `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
+| `Dockerfile` | The image: Claude Code CLI, ccusage, git, ripgrep, the server, non-root user |
+| `addons.example.conf` | Example add-ons: extra tools built into the image (copy to `addons.conf`) |
+| `install-addons.sh` | Installs the add-ons in `addons.conf` while the image builds |
 | `compose.yaml` | The `web` and `claude` services, their folders and security options |
 | `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
 | `.env.example` | Settings for the web UI: workspace folder, password, address, port, `claude` arguments |
@@ -47,6 +50,7 @@ Needs Docker (Docker Desktop on a Mac).
 
 ```bash
 cp .env.example .env                       # once: then set HARNESS_PASSWORD in .env
+cp addons.example.conf addons.conf         # optional: extra tools for the container, edit to taste
 mkdir ~/SandboxedWorkspace                 # once: the workspace folder (HARNESS_WORKSPACE in .env)
 ./start.sh                                 # start Docker if needed, build, start the web UI, print its address
 ./start.sh --lan                           # the same, and open it to other machines on the local network
@@ -57,6 +61,8 @@ docker compose logs -f web                 # follow the server's log
 Open the address `./start.sh` prints (http://127.0.0.1:28471 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the workspace folder's `.claude-home`.
 
 To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
+
+Tools for every session go in `addons.conf`, one line per installer (`apt:`, `npm:` or `pip:`) followed by package names. The next `./start.sh` rebuilds the image with them. Tools you install from a session (`npm install -g`, `pip install --user`, programs in `~/.local/bin`) are kept in `.claude-home`.
 
 ⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
@@ -87,6 +93,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 
 - Done when: `claude` runs in the container on the Mac, logged in, seeing only the workspace folder.
 - ✅ `Dockerfile` and `compose.yaml` with the CLI and a non-root user
+- ✅ Extra tools from `addons.conf`, built in by `install-addons.sh`
 - ✅ Workspace folder on the host from `HARNESS_WORKSPACE`, with the home folder in its `.claude-home` (`compose.yaml`, `start.sh`)
 - 🟡 Login that survives container restarts
 
