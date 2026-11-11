@@ -37,6 +37,7 @@ const ICONS = {
   question: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01"/>',
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  steps: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
 };
 const TOOL_ICONS = {
   Bash: 'terminal', BashOutput: 'terminal', KillShell: 'terminal',
@@ -57,6 +58,9 @@ function parseRecipient(to) {
   if (Number.isInteger(pid)) return { pid, name: null };
   return { pid: null, name: text.replace(/\s*\[[0-9a-f]+\]$/, '') || null };
 }
+
+// Tool cards (also a result without its call) and thinking: what folds into a group.
+const isStep = (node) => node.matches('.tool, .thinking');
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -120,13 +124,29 @@ export function markdown(text) {
   return node;
 }
 
+// Paths as a person reads them: relative to /workspace, and a session's
+// scratchpad (/tmp/claude-1000/<project>/<session id>/scratchpad/) as "scratchpad/".
+const shortPaths = (text) => text
+  .replace(/\/tmp\/claude-\d+\/[^/\s]+\/[0-9a-f-]{36}\/scratchpad\b/g, 'scratchpad')
+  .replace(/(^|[\s'"`=(])\/workspace\//g, '$1');
+
 // The one line that says what a tool call does, from its most telling input.
-function toolSummary(name, input = {}) {
-  if (name === 'Bash') return input.description || input.command || '';
-  if (input.file_path) return input.file_path.replace(/^\/workspace\//, '');
-  const pick = input.description || input.command || input.path || input.pattern || input.url || input.query || input.prompt || input.subject;
-  const text = typeof pick === 'string' ? pick : Object.values(input).find((v) => typeof v === 'string') || '';
-  return text.replace(/\s+/g, ' ').slice(0, 160);
+// `code` says whether it is a command, path or pattern rather than prose.
+function describeTool(name, input = {}) {
+  const prose = (text) => ({ text: shortPaths(String(text)).replace(/\s+/g, ' ').slice(0, 160), code: false });
+  const code = (text) => ({ text: shortPaths(String(text)).replace(/\s+/g, ' ').slice(0, 160), code: true });
+  if (name === 'Bash') return input.description ? prose(input.description) : code(input.command || '');
+  if (input.file_path) return code(input.file_path);
+  if (typeof input.description === 'string') return prose(input.description);
+  for (const key of ['command', 'path', 'pattern', 'url']) if (typeof input[key] === 'string') return code(input[key]);
+  for (const key of ['query', 'prompt', 'subject', 'skill']) if (typeof input[key] === 'string') return prose(input[key]);
+  return prose(Object.values(input).find((v) => typeof v === 'string') || '');
+}
+const toolSummary = (name, input) => describeTool(name, input).text;
+
+function summaryNode(name, input) {
+  const { text, code } = describeTool(name, input);
+  return el('span', code ? 'tool-summary code' : 'tool-summary', text);
 }
 
 function diffView(patch) {
@@ -178,6 +198,7 @@ export class ChatView {
     this.onTerminal = onTerminal;
     this.onTurnEnd = onTurnEnd;
     this.tools = new Map();
+    this.groupParts = new WeakMap();
     this.pending = [];
     this.lastAssistant = '';
     scroll.addEventListener('scroll', () => (this.jump.hidden = this.nearBottom()));
@@ -224,17 +245,111 @@ export class ChatView {
 
   add(entries, { live = true } = {}) {
     const stick = this.nearBottom();
+    const changed = new Set();
     for (const entry of entries) {
       const node = this.render(entry, live);
+      // A result or agent step changes a card that may sit in a group.
+      const card = this.tools.get(entry.toolUseId) || this.tools.get(entry.parentToolUseId) || this.agentCards.get(entry.agentId);
+      const owner = card?.node?.closest('.steps');
+      if (owner) changed.add(owner);
       if (!node) continue;
       this.empty.hidden = true;
-      // Keep pending bubbles last, below what the transcript has recorded.
-      const firstPending = this.pending[0]?.node;
-      if (firstPending && firstPending.parentNode === this.list) this.list.insertBefore(node, firstPending);
-      else this.list.append(node);
+      const group = this.place(node);
+      if (group) changed.add(group);
     }
+    for (const group of changed) this.refreshGroup(group);
     if (stick) this.toBottom();
     else this.jump.hidden = false;
+  }
+
+  // The last thing drawn, above the pending bubbles.
+  tail() {
+    const firstPending = this.pending[0]?.node;
+    const last = firstPending?.parentNode === this.list ? firstPending.previousElementSibling : this.list.lastElementChild;
+    return last === this.empty ? null : last;
+  }
+
+  // Keep pending bubbles last, below what the transcript has recorded.
+  insert(node) {
+    const firstPending = this.pending[0]?.node;
+    if (firstPending && firstPending.parentNode === this.list) this.list.insertBefore(node, firstPending);
+    else this.list.append(node);
+  }
+
+  // Tool calls and thinking in a row fold into one group, so Claude's own
+  // words stay easy to follow. Text Claude wrote just before a run of steps
+  // is a note on the way, drawn quieter than the answer that ends a turn.
+  // Returns the group the node went into.
+  place(node) {
+    const tail = this.tail();
+    if (!isStep(node)) {
+      this.insert(node);
+      return null;
+    }
+    if (tail?.classList.contains('steps')) {
+      this.groupParts.get(tail).body.append(node);
+      return tail;
+    }
+    if (tail && isStep(tail)) {
+      const group = this.makeGroup();
+      tail.replaceWith(group);
+      this.groupParts.get(group).body.append(tail, node);
+      return group;
+    }
+    if (tail?.matches('.msg.assistant')) tail.classList.add('interim');
+    this.insert(node);
+    return null;
+  }
+
+  makeGroup() {
+    const node = el('details', 'steps');
+    const summary = el('summary');
+    const label = el('span', 'steps-label');
+    const detail = el('span', 'steps-detail');
+    const state = el('span', 'tool-state');
+    const chev = icon('chev');
+    chev.classList.add('chev');
+    const mark = icon('steps');
+    mark.classList.add('tool-icon');
+    summary.append(mark, label, detail, state, chev);
+    const body = el('div', 'steps-body');
+    node.append(summary, body);
+    this.groupParts.set(node, { label, detail, state, body, mark });
+    return node;
+  }
+
+  // The group's line: how many calls, which are still running, which failed.
+  refreshGroup(group) {
+    const parts = this.groupParts.get(group);
+    if (!parts) return;
+    const cards = [...parts.body.children].filter((c) => c.classList.contains('tool'));
+    const isAgent = (c) => c.dataset.tool === 'Agent' || c.dataset.tool === 'Task';
+    const agents = cards.length > 0 && cards.every(isAgent);
+    const running = cards.filter((c) => c.dataset.state === 'pending' || c.dataset.state === 'running');
+    const failed = cards.filter((c) => c.dataset.state === 'error');
+    const n = cards.length;
+    parts.label.textContent = !n ? 'Thinking' : agents ? `${n} ${n === 1 ? 'agent' : 'agents'}` : `${n} tool ${n === 1 ? 'call' : 'calls'}`;
+    if (parts.agents !== agents) {
+      const mark = icon(agents ? 'agent' : 'steps');
+      mark.classList.add('tool-icon');
+      parts.mark.replaceWith(mark);
+      Object.assign(parts, { mark, agents });
+    }
+    if (agents) {
+      const done = n - running.length - failed.length;
+      parts.detail.textContent = [running.length && `${running.length} running`, done && `${done} done`].filter(Boolean).join(' · ');
+    } else if (running.length) {
+      const last = running[running.length - 1];
+      parts.detail.textContent = `${last.dataset.tool} · ${last.querySelector('.tool-summary')?.textContent || ''}`;
+    } else {
+      const counts = new Map();
+      for (const c of cards) counts.set(c.dataset.tool || 'Tool', (counts.get(c.dataset.tool || 'Tool') || 0) + 1);
+      parts.detail.textContent = [...counts].map(([name, k]) => (k > 1 ? `${name} ×${k}` : name)).join(' · ');
+    }
+    group.dataset.state = running.length ? 'running' : failed.length ? 'error' : 'done';
+    if (running.length) parts.state.replaceChildren(el('span', 'spinner'));
+    else if (failed.length) parts.state.replaceChildren(icon('x'), el('span', '', `${failed.length} failed`));
+    else parts.state.replaceChildren(icon('check'));
   }
 
   nearBottom() {
@@ -376,7 +491,8 @@ export class ChatView {
     summary.append(iconNode, el('span', 'tool-name', entry.name));
     if (isAgent && input.subagent_type) summary.append(el('span', 'badge', input.subagent_type));
     if (entry.background) summary.append(el('span', 'badge bg', 'background'));
-    summary.append(el('span', 'tool-summary', toolSummary(entry.name, input)), state, chev);
+    summary.append(summaryNode(entry.name, input), state, chev);
+    node.dataset.tool = entry.name;
     const body = el('div', 'tool-body');
     let steps = null;
     let now = null;
@@ -665,7 +781,10 @@ export class ChatView {
     const out = detail.stdout !== undefined ? detail.stdout : entry.text;
     if (out && out.trim()) {
       body.append(el('div', 'tool-label', failed ? 'Error' : 'Output'), el('pre', failed && detail.stdout === undefined ? 'stderr' : '', clipChars(out)));
-      node.append(el('div', 'tool-preview', firstLines(out.trimEnd())));
+      // A one-line result that only repeats the header ("Launching skill: x") adds nothing.
+      const said = toolSummary(name, input);
+      const echo = Boolean(said) && !out.trim().includes('\n') && out.includes(said);
+      if (!echo || failed) node.append(el('div', 'tool-preview', firstLines(out.trimEnd())));
     }
     if (detail.stderr) body.append(el('div', 'tool-label', 'Stderr'), el('pre', 'stderr', clipChars(detail.stderr)));
     if (!out?.trim() && !detail.stderr) body.append(el('div', 'tool-label', 'No output'));

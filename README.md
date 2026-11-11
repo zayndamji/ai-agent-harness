@@ -7,8 +7,8 @@ A self-hosted web UI that runs Claude Code, the real `claude` CLI, inside a Dock
 - Runs several Claude Code sessions at once, listed in a sidebar with what each is doing: working, waiting for your answer, or ready.
 - Sends your keystrokes and messages to the session and streams its output back.
 - Types what you write in the message box into Claude Code as you type it, key by key, like a person at the terminal, and pastes it on Send when it can't be typed exactly.
-- Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results one by one.
-- In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
+- Shows the session two ways: the real terminal, and a Chat tab with messages, tool calls and results. A run of tool calls folds into one line that opens to show each call.
+- In the Chat tab: edit diffs, command output, a task list, highlighted code with Copy, long pasted messages folded to their first lines, the session's title, model, mode and context size, Claude's live status line, prompt suggestions, and a banner when Claude waits for an answer.
 - Lets you answer Claude's questions and prompts from the Chat tab, including typing your own answer.
 - Shows agents and background commands as they run: their steps, reports and live output, in cards and in a Background panel beside the chat.
 - Notifies you when Claude finishes or needs an answer in any session while the tab is in the background.

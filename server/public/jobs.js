@@ -147,6 +147,9 @@ export class JobsPanel {
     jump.type = 'button';
     jump.addEventListener('click', () => {
       job.card.details.open = true;
+      // The card may sit in a folded group of tool calls.
+      const group = job.card.node.closest('details.steps');
+      if (group) group.open = true;
       job.card.node.scrollIntoView({ block: 'center', behavior: 'smooth' });
       if (window.matchMedia('(max-width: 999px)').matches) this.setOpen(false);
     });
