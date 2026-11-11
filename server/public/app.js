@@ -87,6 +87,12 @@ const sessionInfo = () => ({
   isRunning: (id) => slots.some((s) => s.running && s.sessionId === id),
 });
 const jobsPanel = new JobsPanel({ root: $('jobs-panel'), toggle: $('jobs-toggle'), count: $('jobs-count'), chat, sid: () => sid });
+// The header's status counts what still runs in the background.
+const refreshPanel = chat.onJobs;
+chat.onJobs = () => {
+  refreshPanel?.();
+  refreshStatus();
+};
 const filesView = new FilesView($('view-files'), { onStart: (opts) => startSession(opts), session: sessionInfo });
 const usageView = new UsageView($('view-usage'), { onStart: (opts) => startSession(opts), onOpenFolder: (folder) => openFolder(folder) });
 const sessionsView = new SessionsView($('view-sessions'), {
@@ -266,12 +272,29 @@ function refreshStatus() {
   if (!ws) return;
   if (!running) return setStatus('stopped', 'No session');
   if (isWorking()) return setStatus('working', 'Working');
-  setStatus('running', 'Ready');
+  // A turn can end with agents and commands still running in the background.
+  const jobs = [...chat.jobs.values()].filter((j) => j.status === 'running').length;
+  setStatus('running', jobs ? `Ready · ${jobs} in background` : 'Ready');
 }
+
+// The header's left side drops the name, then the folder, then the status
+// text, until it fits. Its room depends on the window and the sidebar, and
+// what it holds changes with the status.
+const barLeft = document.querySelector('.bar-left');
+const TIGHT = ['no-name', 'no-folder', 'no-status-text'];
+function fitHeader() {
+  barLeft.classList.remove(...TIGHT);
+  for (const cls of TIGHT) {
+    if (barLeft.scrollWidth <= barLeft.clientWidth) break;
+    barLeft.classList.add(cls);
+  }
+}
+new ResizeObserver(fitHeader).observe(barLeft);
 
 function setStatus(state, text) {
   statusEl.dataset.state = state;
   statusText.textContent = text;
+  fitHeader();
   const prefix = unseen ? `(${unseen}) ` : isWorking() ? '● ' : '';
   document.title = prefix + (sessionTitle || BASE_TITLE);
 }
@@ -608,6 +631,7 @@ function renderFolderChip() {
   $('folder-chip').hidden = !current.running;
   $('folder-chip-text').textContent = current.folder || 'workspace';
   $('folder-chip').title = `Session folder: ${folderLabel(current.folder)}. Open it in the Files tab.`;
+  fitHeader();
 }
 $('folder-chip').addEventListener('click', () => openFolder(current.folder));
 

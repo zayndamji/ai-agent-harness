@@ -177,15 +177,20 @@ body.app {
 }
 .bar form { margin: 0; }
 .bar-left { display: flex; align-items: center; gap: 12px; min-width: 0; overflow: hidden; }
-/* Five tabs leave no room for the name and the folder below this width. */
-@media (max-width: 1000px) { .brand-name { display: none; } }
-@media (max-width: 860px) { .header-folder { display: none; } .status #status-text { display: none; } .status { padding: 6px; } }
+/* When the left side runs out of room (fitHeader in app.js), the name goes
+   first, then the folder, then the status text, so nothing is clipped. */
+.bar-left.no-name .brand-name,
+.bar-left.no-folder .header-folder,
+.bar-left.no-status-text #status-text { display: none; }
+.bar-left.no-status-text .status { padding: 6px; }
 .brand { display: flex; align-items: center; gap: 9px; }
 .brand-name { font-weight: 600; font-size: 14.5px; letter-spacing: -0.01em; white-space: nowrap; }
 .bar-actions { display: flex; gap: 6px; justify-self: end; }
 
 .status {
   justify-self: start;
+  flex-shrink: 0;
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -865,7 +870,8 @@ body.files-open .idle, body.files-open .composer-wrap { display: none; }
 }
 .folder-chip svg { width: 13px; height: 13px; color: var(--accent); }
 .folder-chip:hover { background: var(--bg-sunken); color: var(--text); }
-.header-folder { padding: 4px 9px; max-width: 220px; }
+.header-folder { padding: 4px 9px; max-width: 220px; flex-shrink: 0; }
+.header-folder #folder-chip-text { overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) { .header-folder { display: none; } }
 @media (max-width: 430px) {
   .bar .brand { display: none; }
