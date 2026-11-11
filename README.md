@@ -49,17 +49,18 @@ Needs Docker (Docker Desktop on a Mac).
 cp .env.example .env                       # once: then set HARNESS_PASSWORD in .env
 mkdir ~/SandboxedWorkspace                 # once: the workspace folder (HARNESS_WORKSPACE in .env)
 ./start.sh                                 # start Docker if needed, build, start the web UI, print its address
+./start.sh --lan                           # the same, and open it to other machines on the local network
 ./stop.sh                                  # stop the web UI and end the session (volumes are kept)
 docker compose logs -f web                 # follow the server's log
 ```
 
-Open the address `./start.sh` prints (http://127.0.0.1:8080 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
+Open the address `./start.sh` prints (http://127.0.0.1:28471 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
 
 To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
 
 ⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
-The web UI listens only on this computer. To reach it from other machines on your network, set `HARNESS_BIND=0.0.0.0` in `.env`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
+Only this computer can open the web UI, unless you start it with `./start.sh --lan`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 
 ## Run Claude Code in your terminal
 

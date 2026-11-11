@@ -1,9 +1,21 @@
 #!/usr/bin/env bash
 # Starts the web UI: builds the image if anything changed, starts the `web`
 # container, waits until it answers, and prints the address to open.
-# Usage: ./start.sh
+# Usage: ./start.sh          only this computer can open the web UI
+#        ./start.sh --lan    other machines on the local network can too
 set -euo pipefail
 cd "$(dirname "$0")"
+
+bind=127.0.0.1
+for arg in "$@"; do
+  case $arg in
+    --lan) bind=0.0.0.0 ;;
+    *) echo "Usage: ./start.sh [--lan]" >&2; exit 1 ;;
+  esac
+done
+# compose.yaml publishes the port on this address. Set here on every start,
+# so the web UI is open to the network only when --lan is given.
+export HARNESS_BIND=$bind
 
 if ! docker info >/dev/null 2>&1; then
   if [ "$(uname)" = "Darwin" ] && [ -d /Applications/Docker.app ]; then
@@ -45,20 +57,20 @@ fi
 
 docker compose up -d --build web
 
-# The address from .env, the same values compose.yaml publishes.
-bind=$(grep -E '^HARNESS_BIND=' .env | cut -d= -f2- || true)
+# The port from .env, the same value compose.yaml publishes.
 port=$(grep -E '^HARNESS_PORT=' .env | cut -d= -f2- || true)
-bind=${bind:-127.0.0.1}
-port=${port:-8080}
-host=$bind
-[ "$host" = "0.0.0.0" ] && host=127.0.0.1
-url="http://$host:$port"
+port=${port:-28471}
+url="http://127.0.0.1:$port"
 
 for _ in $(seq 1 30); do
   if curl -fs -o /dev/null "$url/login"; then
     echo "The web UI is running at $url"
     [ -n "$workspace" ] && echo "Claude works in $workspace (/workspace in the container)."
-    [ "$bind" = "0.0.0.0" ] && echo "It also listens on this machine's network address, port $port."
+    if [ "$bind" = 0.0.0.0 ]; then
+      echo "It is also open to the local network, on this machine's address, port $port."
+    else
+      echo "Only this computer can open it. Use ./start.sh --lan to open it to the local network."
+    fi
     exit 0
   fi
   sleep 1
