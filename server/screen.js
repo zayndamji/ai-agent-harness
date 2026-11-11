@@ -1,7 +1,7 @@
 'use strict';
 // Reads Claude Code's live status from the server's copy of the terminal
-// screen: the spinner line, its tip, the footer, a prompt suggestion, and
-// whether a dialog is waiting for an answer. Claude Code doesn't publish any
+// screen: the spinner line, its tip, the footer, and whether a dialog is
+// waiting for an answer. Claude Code doesn't publish any
 // of this, so it is matched from the screen text; a CLI update can change it.
 
 // "✻ Scampering… (3s · ↓ 120 tokens · thinking with high effort)"
@@ -44,7 +44,7 @@ function isFaint(line, fromCol) {
 
 function readStatus(term) {
   const lines = rows(term);
-  const status = { spinner: null, detail: null, tip: null, mode: null, effort: null, suggestion: null, dialog: null, working: false };
+  const status = { spinner: null, detail: null, tip: null, mode: null, effort: null, dialog: null, working: false };
 
   lines.forEach(({ text }, i) => {
     // Agents and tool calls above it draw spinner-like lines too
@@ -64,15 +64,6 @@ function readStatus(term) {
     if (effort) status.effort = effort[1];
     if (/esc to interrupt/.test(text)) status.working = true;
   });
-
-  // The input box sits between two horizontal rules.
-  for (let i = lines.length - 1; i > 0; i--) {
-    const input = INPUT.exec(lines[i].text);
-    if (!input || !RULE.test(lines[i - 1].text)) continue;
-    const text = input[1];
-    if (text && !/^Try "/.test(text) && isFaint(lines[i].line, lines[i].text.indexOf('❯') + 1)) status.suggestion = text;
-    break;
-  }
 
   status.dialog = readDialog(lines);
   return status;

@@ -244,19 +244,8 @@ export class ChatView {
     this.jobsChanged();
   }
 
-  // A message sent from this page shows at once, faded, until the transcript
-  // records it. If Claude is busy, Claude Code queues it.
-  addPending(text, queued) {
-    const node = this.userBubble(text, null);
-    node.classList.add('pending');
-    node.append(el('span', 'pending-label', queued ? 'Queued' : 'Sending'));
-    this.empty.hidden = true;
-    this.list.append(node);
-    this.pending.push({ text: text.trim(), node });
-    this.toBottom();
-  }
-
-  // Claude Code may store the text slightly differently (line endings, a
+  // A message typed while Claude works shows as queued until the transcript
+  // records it as sent. Claude Code may store the text slightly differently (line endings, a
   // trimmed paste), so with no exact match the oldest pending one is settled.
   settlePending(text) {
     let i = this.pending.findIndex((p) => p.text === text.trim());
@@ -889,7 +878,7 @@ export class ChatView {
         return null;
       }
       case 'shell': {
-        // Sent from the message box as "!command".
+        // Typed in the terminal as "!command".
         this.settlePending(`!${entry.text}`);
         const node = el('div', 'msg user');
         const bubble = el('div', 'bubble shell');
