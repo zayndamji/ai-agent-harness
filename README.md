@@ -67,7 +67,7 @@ Tools for every session go in `addons.conf`, one line per installer (`apt:`, `np
 
 ⚠️ `.claude-home` holds your Claude login token in a plain file. Keep the workspace folder out of cloud sync and shared folders.
 
-Sign in with your own Claude account, and keep the web UI to yourself. Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) don't let you share an account or make it available to anyone else, so use `--lan` only to reach the web UI from your own devices. The harness runs the unmodified `claude` from npm, and Claude Code handles the login itself. The only input a session gets is what you type, paste or click in its terminal.
+Sign in with your own Claude account, and keep the web UI to yourself. Free, Pro, Max and Ultra plans fall under Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms), which don't let you share an account or make it available to anyone else. Team and Enterprise plans fall under the [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), where your organization answers for everything done on its accounts, so check its rules before running the harness on a work seat. On any plan, use `--lan` only to reach the web UI from your own devices, and follow the [Usage Policy](https://www.anthropic.com/legal/aup). The harness runs the unmodified `claude` from npm, and Claude Code handles the login itself. The only input a session gets is what you type, paste or click in its terminal.
 
 Only this computer can open the web UI, unless you start it with `./start.sh --lan`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 
