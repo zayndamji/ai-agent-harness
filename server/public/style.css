@@ -353,6 +353,25 @@ body.app {
   overflow-wrap: anywhere;
 }
 .msg.user.pending .bubble { opacity: 0.55; }
+.bubble-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+/* Twelve lines of 14.5px/1.5 text, faded out at the bottom. */
+.msg.user .bubble.folded {
+  max-height: calc(12 * 1.5em + 20px);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 75%, transparent);
+  mask-image: linear-gradient(#000 75%, transparent);
+}
+.msg.user .bubble.folded:has(.bubble-label) { max-height: calc(12 * 1.5em + 38px); }
+button.bubble-more {
+  display: block;
+  margin: 4px 6px 0 auto;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12px;
+}
+button.bubble-more:hover { background: transparent; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 /* A shell-mode command ("!ls") and its output. */
 .msg.user .bubble.shell { font: 13px/1.5 var(--mono); }
 .shell-prompt { color: var(--accent); font-weight: 700; }

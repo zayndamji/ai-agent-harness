@@ -6,6 +6,12 @@ import hljs from '/vendor/highlight.mjs';
 
 const PREVIEW_CHARS = 4000;
 const PREVIEW_LINES = 6;
+// A user message longer than this folds.
+const FOLD_LINES = 12;
+const FOLD_CHARS = 1200;
+// Pasted text that arrives wrapped as <pasted_content id="…">…</pasted_content id="…">.
+const PASTED = /<pasted_content\b[^>]*>/;
+const PASTED_TAGS = /[ \t]*<\/?pasted_content\b[^>]*>[ \t]*\n?/g;
 
 hljs.configure({ ignoreUnescapedHTML: true });
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
@@ -241,11 +247,28 @@ export class ChatView {
     this.jump.hidden = true;
   }
 
+  // Long messages (a pasted brief) fold to their first lines with a toggle.
   userBubble(text, at) {
     const node = el('div', 'msg user');
-    const bubble = el('div', 'bubble', text);
+    const pasted = PASTED.test(text);
+    const shown = text.replace(PASTED_TAGS, '').replace(/^\s*\n/, '').trimEnd();
+    const bubble = el('div', 'bubble');
+    if (pasted) bubble.append(el('span', 'bubble-label', 'Pasted text'));
+    bubble.append(document.createTextNode(shown));
     if (at) bubble.title = new Date(at).toLocaleString();
     node.append(bubble);
+    const lines = shown.split('\n').length;
+    if (lines > FOLD_LINES || shown.length > FOLD_CHARS) {
+      bubble.classList.add('folded');
+      const more = el('button', 'bubble-more', `Show all ${lines} lines`);
+      more.type = 'button';
+      more.addEventListener('click', () => {
+        const folded = bubble.classList.toggle('folded');
+        more.textContent = folded ? `Show all ${lines} lines` : 'Show less';
+        if (folded) node.scrollIntoView({ block: 'nearest' });
+      });
+      node.append(more);
+    }
     return node;
   }
 
