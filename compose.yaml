@@ -9,8 +9,9 @@ x-claude: &claude
   volumes:
     # Login, settings and session history (~/.claude and ~/.claude.json).
     - home:/home/node
-    # Projects Claude works on. No host folders are mounted.
-    - workspace:/workspace
+    # Projects Claude works on: the folder HARNESS_WORKSPACE names, or the
+    # `workspace` volume when it's empty. Nothing else from the host is mounted.
+    - ${HARNESS_WORKSPACE:-workspace}:/workspace
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 

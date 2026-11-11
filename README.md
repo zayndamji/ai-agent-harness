@@ -1,6 +1,6 @@
 # Claude Code web harness
 
-A self-hosted web UI that runs the real `claude` CLI inside a Docker container and lets you drive it from a browser. The container keeps Claude Code's files apart from the host machine. It runs on a Mac with Docker Desktop and later on a Raspberry Pi 5.
+A self-hosted web UI that runs the real `claude` CLI inside a Docker container and lets you drive it from a browser. The container sees only one folder on the host machine, the workspace folder you choose. It runs on a Mac with Docker Desktop and later on a Raspberry Pi 5.
 
 ## What it does
 
@@ -19,7 +19,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 - Has a Usage tab: tokens and estimated cost per day, the current 5-hour block, breakdowns by project, token type and model, and every session, day and block in detail, from [ccusage](https://github.com/ccusage/ccusage) running offline.
 - Gives the same features as the `claude` CLI: slash commands, permission prompts, auto mode and web access.
 - Keeps sessions running when the browser closes, and shows the current screen when you come back. Each browser tab can show a different session.
-- Keeps the session's files in container volumes, never in the host's home directory.
+- Works in one folder on the host that you choose (`HARNESS_WORKSPACE`, `~/SandboxedWorkspace` by default). Move a project into it to work on it, and move it back out when you're done. Claude Code's login and history stay in a container volume.
 - Puts a password in front of the web UI.
 
 ## How it works
@@ -39,7 +39,7 @@ A self-hosted web UI that runs the real `claude` CLI inside a Docker container a
 | `Dockerfile` | The image: Claude Code CLI, ccusage, dev tools, the server, non-root user |
 | `compose.yaml` | The `web` and `claude` services, their volumes and security options |
 | `server/` | The web UI: `server.js` (login, WebSocket), `slots.js` (one slot per session: its process, transcript, typist and live status), `session.js` (the `claude` process), `transcript.js` (the Chat tab's entries), `screen.js` (live status and the input box from the screen), `typist.js` (types the message box into Claude Code), `files.js` (the Files and Sessions tabs' API), `usage.js` (the Usage tab's ccusage reports), `public/` (browser page; `sidebar.js` is the session list, `jobs.js` the Background panel, `usage-view.js` the Usage tab) |
-| `.env.example` | Settings for the web UI: password, address, port, `claude` arguments |
+| `.env.example` | Settings for the web UI: workspace folder, password, address, port, `claude` arguments |
 
 ## Run the web UI
 
@@ -47,12 +47,17 @@ Needs Docker (Docker Desktop on a Mac).
 
 ```bash
 cp .env.example .env                       # once: then set HARNESS_PASSWORD in .env
+mkdir ~/SandboxedWorkspace                 # once: the workspace folder (HARNESS_WORKSPACE in .env)
 ./start.sh                                 # start Docker if needed, build, start the web UI, print its address
 ./stop.sh                                  # stop the web UI and end the session (volumes are kept)
 docker compose logs -f web                 # follow the server's log
 ```
 
 Open the address `./start.sh` prints (http://127.0.0.1:8080 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the `claude-harness_home` volume.
+
+To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
+
+⚠️ Docker Desktop shares all of `/Users` with its VM by default. In Docker Desktop, open Settings, Resources, File sharing, and remove everything except the workspace folder, so a container escape can't reach the rest of your files.
 
 The web UI listens only on this computer. To reach it from other machines on your network, set `HARNESS_BIND=0.0.0.0` in `.env`. To start sessions in auto mode, set `HARNESS_CLAUDE_ARGS=--permission-mode auto`. Up to 10 sessions run at once; set `HARNESS_MAX_SESSIONS` for a different limit.
 
@@ -77,8 +82,9 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 
 ### Sandboxed Claude Code container
 
-- Done when: `claude` runs in the container on the Mac, logged in, with its files only in volumes.
+- Done when: `claude` runs in the container on the Mac, logged in, seeing only its volumes and the workspace folder.
 - ✅ `Dockerfile` and `compose.yaml` with the CLI, a non-root user and volumes for the home folder and the workspace
+- ✅ Workspace folder on the host from `HARNESS_WORKSPACE` (`compose.yaml`, `start.sh`)
 - 🟡 Login that survives container restarts
 
 ### Single session web UI
