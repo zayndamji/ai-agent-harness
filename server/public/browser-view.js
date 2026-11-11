@@ -1,6 +1,7 @@
 // The Browser tab: the container's shared Chrome, drawn by noVNC from the
 // server's /vnc connection. Clicks and keys go to Chrome, never to Claude
-// Code. Connected only while the tab is open.
+// Code. Connects the first time the tab opens and stays connected (and
+// reconnects) after that, so coming back to the tab is instant.
 import RFB from '/vendor/novnc/core/rfb.js';
 import { ask, confirmAction, notice } from '/dialog.js';
 
@@ -20,6 +21,7 @@ export class BrowserView {
     this.root = root;
     this.rfb = null;
     this.visible = false;
+    this.started = false;
     this.retry = null;
     this.available = null;
 
@@ -46,17 +48,22 @@ export class BrowserView {
 
   show() {
     this.visible = true;
-    this.connect();
+    this.started = true;
+    if (!this.rfb) return this.connect();
+    // Hidden, the screen measured 0x0 and noVNC scaled to nothing: scale
+    // again to the size it has now, and take the keyboard back.
+    this.rfb.scaleViewport = true;
+    this.rfb.focus();
   }
 
+  // Leaving the tab keeps the connection, so the view is still live when the
+  // person comes back. The hidden canvas loses focus, so keys stay out of it.
   hide() {
     this.visible = false;
-    clearTimeout(this.retry);
-    this.rfb?.disconnect();
   }
 
   async connect() {
-    if (!this.visible || this.rfb) return;
+    if (!this.started || this.rfb) return;
     if (this.available === null) {
       try {
         const res = await fetch('/api/browser');
@@ -69,7 +76,7 @@ export class BrowserView {
       this.setStatus('off', 'No browser');
       return this.showMessage('This container has no browser. Rebuild the image with ./start.sh to add it.');
     }
-    if (!this.visible || this.rfb) return;
+    if (this.rfb) return;
     this.setStatus('connecting', 'Connecting');
     const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/vnc`;
     const rfb = new RFB(this.screen, url, { shared: true });
@@ -80,15 +87,13 @@ export class BrowserView {
     rfb.addEventListener('connect', () => {
       this.message.hidden = true;
       this.setStatus('on', 'Connected');
-      rfb.focus();
+      if (this.visible) rfb.focus();
     });
     rfb.addEventListener('disconnect', () => {
       this.rfb = null;
       this.setStatus('off', 'Not connected');
-      if (this.visible) {
-        this.showMessage('Lost the connection to the browser. Trying again…');
-        this.later();
-      }
+      this.showMessage('Lost the connection to the browser. Trying again…');
+      this.later();
     });
     this.rfb = rfb;
   }
