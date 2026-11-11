@@ -6,6 +6,7 @@
 // /clear or /resume inside the session changes Claude's own session id.
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { Session } = require('./session');
 const { TranscriptFollower, listSessions } = require('./transcript');
@@ -69,6 +70,11 @@ class Slot extends EventEmitter {
     this.tuiTimer = null;
     this.answering = false;
     this.stopRequested = false;
+    // Why the harness ended the session, sent with its exit ('folder-gone').
+    this.endReason = null;
+    // The folder's real path and identity (device and inode) at start.
+    this.folderReal = null;
+    this.folderId = null;
     // When this session last got keys or a message, and when it last got a
     // command that switches transcripts (null once the switch happened).
     this.lastInputAt = 0;
@@ -93,8 +99,9 @@ class Slot extends EventEmitter {
       this.typist.reset();
       this.tuiStatus = null;
       this.send({ type: 'tui', status: null });
-      this.send({ type: 'exit', exitCode, signal, stopped: this.stopRequested });
+      this.send({ type: 'exit', exitCode, signal, stopped: this.stopRequested, reason: this.endReason, folder: this.folder });
       this.stopRequested = false;
+      this.endReason = null;
       this.send(this.state());
       this.emit('changed');
       this.emit('exit');
@@ -202,6 +209,9 @@ class Slot extends EventEmitter {
     const args = [...this.args, ...(resuming ? ['--resume', sessionId] : ['--session-id', sessionId])];
     try {
       this.folder = folder.rel;
+      this.folderReal = folder.real;
+      const stat = fs.statSync(folder.real);
+      this.folderId = `${stat.dev}:${stat.ino}`;
       // A little slack, so a transcript created in the same second still counts.
       this.transcript.start(Date.now() - 2000, { cwd: folder.real, sessionId });
       this.session.start(cols, rows, { cwd: folder.real, args });
@@ -227,6 +237,31 @@ class Slot extends EventEmitter {
     this.removeAllListeners('message');
   }
 
+  // Whether the session's folder has been moved out of the workspace, renamed,
+  // removed, or swapped for another folder with the same name. Moving it out
+  // and back in while the session runs keeps its inode, so that still counts
+  // as the same folder.
+  folderGone() {
+    try {
+      const stat = fs.statSync(this.folderReal);
+      return !stat.isDirectory() || `${stat.dev}:${stat.ino}` !== this.folderId;
+    } catch {
+      return true;
+    }
+  }
+
+  // Checked whenever the session gets keys, a message, an answer or a
+  // browser: a session whose folder is gone is stopped, and the input that
+  // came with the check is dropped. Returns whether it was stopped.
+  checkFolder() {
+    if (!this.running || !this.folderReal || !this.folderGone()) return false;
+    if (this.endReason) return true;
+    console.log(`folder /${this.folder} of slot ${this.sid} is gone, stopping its session`);
+    this.endReason = 'folder-gone';
+    this.session.stop();
+    return true;
+  }
+
   // Whether a switch command was sent recently and its switch hasn't happened.
   get switching() {
     return this.switchAt !== null && Date.now() - this.switchAt < SWITCH_WINDOW_MS;
@@ -240,6 +275,7 @@ class Slot extends EventEmitter {
   // Keys from the Terminal tab. Enter runs what Claude Code's input box
   // holds, so the box is read first, the way a person glances at it.
   input(data) {
+    if (this.checkFolder()) return;
     const box = data.includes('\r') && this.session.mirror ? readInputBox(this.session.mirror) : null;
     this.noteInput(box?.text);
     this.session.write(data);
@@ -247,11 +283,13 @@ class Slot extends EventEmitter {
   }
 
   compose(text, caret, paste) {
+    if (this.checkFolder()) return;
     this.noteInput();
     this.typist.compose(text, caret, paste);
   }
 
   submit(text, fail) {
+    if (this.checkFolder()) return fail(`/${this.folder} was moved or removed, so the session ended.`);
     this.noteInput(text);
     this.typist.submit(text, fail);
   }
@@ -285,6 +323,7 @@ class Slot extends EventEmitter {
   // for the browser when nothing was sent.
   answer(msg, fail) {
     if (!this.running) return fail('No session is running.');
+    if (this.checkFolder()) return fail(`/${this.folder} was moved or removed, so the session ended.`);
     if (this.answering) return fail('Still sending the last answer.');
     this.session.withScreen((mirror) => {
       const dialog = readStatus(mirror).dialog;

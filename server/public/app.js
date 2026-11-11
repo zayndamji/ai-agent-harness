@@ -471,8 +471,9 @@ $('dialog-open').addEventListener('click', () => showView('terminal'));
 // The start card's words: a new session, an ended one, or none at all.
 function renderIdle() {
   if (sid) {
-    idleTitle.textContent = lastExit?.sid === sid ? lastExit.text : 'This session has ended';
-    idleText.textContent = 'Start a new session, pick a folder, or resume an earlier conversation. Files in the workspace are kept.';
+    const exit = lastExit?.sid === sid ? lastExit : null;
+    idleTitle.textContent = exit ? exit.text : 'This session has ended';
+    idleText.textContent = exit?.detail || 'Start a new session, pick a folder, or resume an earlier conversation. Files in the workspace are kept.';
   } else {
     idleTitle.textContent = pickingNew ? 'New session' : 'No session running';
     idleText.textContent = 'Start Claude Code in the workspace, or pick a folder or an earlier conversation. It keeps running when you close this page.';
@@ -536,7 +537,9 @@ function connect() {
         term.write(msg.data);
         break;
       case 'exit':
-        lastExit = { sid, text: msg.stopped ? 'Session stopped' : `Claude Code exited (code ${msg.exitCode})` };
+        lastExit = msg.reason === 'folder-gone'
+          ? { sid, text: 'Its folder is gone', detail: `/${msg.folder || ''} was moved out of the workspace, renamed or removed, so the session ended. Move it back to resume the conversation.` }
+          : { sid, text: msg.stopped ? 'Session stopped' : `Claude Code exited (code ${msg.exitCode})` };
         showState(false);
         break;
       case 'error':

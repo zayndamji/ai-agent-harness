@@ -332,6 +332,7 @@ function attach(client, sid) {
     client.live = true;
     return;
   }
+  slot.checkFolder();
   slot.snapshot((messages) => {
     if (client.readyState !== client.OPEN || client.attachGen !== gen) return;
     for (const message of messages) client.send(JSON.stringify({ ...message, sid: slot.sid }));

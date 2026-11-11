@@ -60,7 +60,7 @@ docker compose logs -f web                 # follow the server's log
 
 Open the address `./start.sh` prints (http://127.0.0.1:28471 by default), log in with the password, and click Start session. On the first session, pick a theme and sign in with your Claude account: Claude Code prints a link, you open it in your browser and paste the code back. The login is kept in the workspace folder's `.claude-home`.
 
-To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
+To work on a project, move its folder into the workspace folder, for example by dragging it in Finder. A move on the same disk is instant, even for gigabytes. Move it back when you're done. A session whose folder is moved out, renamed or removed ends the next time you type into it or open it. Claude can change or delete anything in the workspace, so keep a backup of what you can't lose.
 
 Tools for every session go in `addons.conf`, one line per installer (`apt:`, `npm:` or `pip:`) followed by package names. The next `./start.sh` rebuilds the image with them. Tools you install from a session (`npm install -g`, `pip install --user`, programs in `~/.local/bin`) are kept in `.claude-home`.
 
@@ -106,6 +106,7 @@ docker compose build --pull --no-cache     # update Claude Code to the latest re
 - ✅ A signed-in session answering a message from the web UI
 - ✅ Chat tab with messages, tool calls and results (`server/transcript.js`, `server/public/chat.js`)
 - ✅ Start or resume a session in any workspace folder, and a Sessions tab across all folders (`server/public/files.js`, `server/public/sessions.js`)
+- ✅ A session ends when its folder is moved out of the workspace or removed (`server/slots.js`)
 - ✅ Answer questions from the Chat tab, and a Background panel for agents and background commands (`server/screen.js`, `server/public/jobs.js`)
 - ✅ Usage tab from ccusage, offline (`server/usage.js`, `server/public/usage-view.js`)
 
